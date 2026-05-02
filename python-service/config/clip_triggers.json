@@ -1,0 +1,8 @@
+{
+  "enabled": true,
+  "triggers": [
+    { "phrase": "let's go", "pre_sec": 3, "post_sec": 8, "label": "hype_moment" },
+    { "phrase": "what", "pre_sec": 2, "post_sec": 6, "label": "reaction" },
+    { "phrase": "no way", "pre_sec": 2, "post_sec": 6, "label": "reaction" }
+  ]
+}

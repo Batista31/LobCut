@@ -1,0 +1,12 @@
+{
+  "agents": {
+    "defaults": {
+      "model": "openai/gpt-4o",
+      "workspace": "/app/workspace"
+    }
+  },
+  "gateway": {
+    "port": 18789,
+    "mode": "local"
+  }
+}
