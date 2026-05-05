@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>LobCut</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #0e0e10;
+        --surface: #18181b;
+        --border: #27272a;
+        --text: #fafafa;
+        --muted: #71717a;
+        --accent: #6366f1;
+        --success: #22c55e;
+        --error: #ef4444;
+        font-family: Inter, system-ui, sans-serif;
+      }
+      * { box-sizing: border-box; }
+      body { margin: 0; background: var(--bg); color: var(--text); }
+      main { padding: 28px; }
+      header { display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--border); padding-bottom: 18px; }
+      h1 { margin: 0; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 22px; }
+      button, a.button { border: 1px solid var(--border); background: #202024; color: var(--text); border-radius: 6px; padding: 8px 12px; text-decoration: none; cursor: pointer; }
+      section { margin-top: 24px; border: 1px solid var(--border); background: var(--surface); border-radius: 6px; overflow: hidden; }
+      .sectionHead { padding: 16px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; }
+      .sectionHead h2 { margin: 0; font-size: 16px; }
+      table { width: 100%; border-collapse: collapse; }
+      th, td { text-align: left; border-bottom: 1px solid var(--border); padding: 12px; }
+      th { color: var(--muted); font-size: 12px; text-transform: uppercase; }
+      code { color: #d4d4d8; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+      .muted { color: var(--muted); }
+      .pill { display: inline-flex; border: 1px solid var(--border); border-radius: 999px; padding: 2px 8px; font-size: 12px; }
+      .DONE { color: var(--success); border-color: var(--success); }
+      .FAILED { color: var(--error); border-color: var(--error); }
+      .PROCESSING, .PENDING { color: var(--accent); border-color: var(--accent); }
+      .banner { margin-top: 18px; padding: 12px; border: 1px solid var(--border); border-radius: 6px; color: var(--muted); }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <h1>LobCut</h1>
+        <div>
+          <span id="user" class="muted">Checking login...</span>
+          <a class="button" href="http://localhost:8000/auth/login">Sign in</a>
+        </div>
+      </header>
+      <div class="banner" id="status">Starting dashboard...</div>
+      <section>
+        <div class="sectionHead">
+          <h2>Jobs</h2>
+          <button id="refresh">Refresh</button>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>File</th>
+              <th>Type</th>
+              <th>Status</th>
+              <th>Category</th>
+              <th>Created</th>
+            </tr>
+          </thead>
+          <tbody id="jobs">
+            <tr><td colspan="6" class="muted">Loading...</td></tr>
+          </tbody>
+        </table>
+      </section>
+    </main>
+    <script>
+      const apiBase = 'http://localhost:8000';
+      const status = document.getElementById('status');
+      const jobsBody = document.getElementById('jobs');
+      const user = document.getElementById('user');
+
+      async function fetchJson(path) {
+        const response = await fetch(`${apiBase}${path}`, { credentials: 'include' });
+        if (response.status === 401) {
+          throw new Error('Sign in required');
+        }
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+        return response.json();
+      }
+
+      function renderJobs(jobs) {
+        if (!jobs.length) {
+          jobsBody.innerHTML = '<tr><td colspan="6" class="muted">No jobs yet.</td></tr>';
+          return;
+        }
+        jobsBody.innerHTML = jobs.map((job) => `
+          <tr>
+            <td><code>#${job.id}</code></td>
+            <td>${job.filename || '-'}</td>
+            <td>${job.detected_type || '-'}</td>
+            <td><span class="pill ${job.status}">${job.status}</span></td>
+            <td>${job.ai_category || '-'}</td>
+            <td>${job.created_at || '-'}</td>
+          </tr>
+        `).join('');
+      }
+
+      async function load() {
+        try {
+          const me = await fetchJson('/auth/me');
+          user.textContent = me.name || me.email || 'Signed in';
+          const jobs = await fetchJson('/jobs');
+          renderJobs(jobs);
+          status.textContent = 'Connected to LobCut API.';
+        } catch (error) {
+          status.textContent = error.message;
+          jobsBody.innerHTML = '<tr><td colspan="6" class="muted">Sign in or start the API to load jobs.</td></tr>';
+        }
+      }
+
+      document.getElementById('refresh').addEventListener('click', load);
+      load();
+      setInterval(load, 5000);
+    </script>
+  </body>
+</html>

@@ -1,4 +1,5 @@
 import json
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -6,6 +7,12 @@ from pipelines.video_pipeline.errors import VideoPipelineError
 
 
 def _run(cmd: list[str]) -> subprocess.CompletedProcess:
+    executable = cmd[0]
+    if shutil.which(executable) is None:
+        raise VideoPipelineError(
+            f"{executable} is not installed or is not on PATH. Install FFmpeg and restart LobCut.",
+            recoverable=False,
+        )
     proc = subprocess.run(cmd, capture_output=True, text=True)
     if proc.returncode != 0:
         raise VideoPipelineError(proc.stderr.strip() or "FFmpeg command failed")

@@ -1,0 +1,32 @@
+{
+  "name": "lobcut",
+  "version": "1.0.0",
+  "description": "LobCut desktop wrapper",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder"
+  },
+  "dependencies": {
+    "electron": "^28.3.3",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "com.lobcut.desktop",
+    "productName": "LobCut",
+    "files": [
+      "**/*",
+      "../dashboard/**/*",
+      "../docker-compose.yml"
+    ],
+    "mac": {
+      "target": "dmg"
+    },
+    "linux": {
+      "target": "AppImage"
+    },
+    "win": {
+      "target": "nsis"
+    }
+  }
+}

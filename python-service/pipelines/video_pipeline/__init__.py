@@ -1,4 +1,4 @@
-"""Video pipeline for OpenClaw Phase 3/4."""
+"""Video pipeline for LobCut Phase 3/4."""
 
 from pipelines.video_pipeline.pipeline import run
 

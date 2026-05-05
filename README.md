@@ -1,195 +1,306 @@
-# MediaScribe
+# LobCut
 
-MediaScribe is a local autonomous media processing agent for the Samsung PRISM
-"Clash of the Claws" hackathon. It runs on top of the OpenClaw runtime, uses a
-FastAPI bridge for pipeline execution, classifies images with OpenCV + Gemini
-Flash, and transcribes videos with Whisper + SRT subtitle generation.
+LobCut is a local autonomous media processing agent written in Python.
 
-## What It Does
+Right now, the project is focused on two things:
 
-- Watches or receives media file paths through the OpenClaw `media-processor` skill
-- Processes images with:
-  - local blur detection
-  - Gemini Flash semantic classification
-  - category, tags, and summary generation
-- Processes videos with:
-  - Whisper transcription
-  - `.srt` subtitle generation
-  - FFmpeg-backed media handling
-- Tracks every job in SQLite
-- Writes one-line memory entries after every successful job
+- watching local folders for new media
+- classifying incoming images automatically
 
-## Final Project Layout
+The current image pipeline uses a hybrid approach:
+
+- blur detection runs locally with OpenCV
+- semantic image classification runs through the Gemini API
+
+LobCut then routes the file into the correct output folder and records the full job in SQLite.
+
+## Current Status
+
+Phase 0 and Phase 1 are complete and working.
+
+Phase 2 is now implemented and working for images.
+
+What that means today:
+
+- new files dropped into `input/images/` are detected automatically
+- file stability checks prevent half-written file processing
+- duplicate source files are ignored
+- every job is tracked in `orchestrator/jobs.db`
+- blurry images are detected locally
+- non-blurry images are classified through Gemini
+- classified files are moved into AI-driven output folders like:
+  - `output/images/blurry/`
+  - `output/images/people/`
+  - `output/images/wildlife/`
+  - `output/images/landscape/`
+  - `output/images/portrait/`
+  - or any other category returned by the model
+
+## How It Works
+
+### 1. Watcher
+
+`orchestrator/watcher.py` monitors:
+
+- `input/images/`
+- `input/videos/`
+
+When a new file appears:
+
+- LobCut waits for the file to stop changing
+- classifies it as `IMAGE`, `VIDEO`, or `UNKNOWN`
+- creates a DB row
+- routes it to the correct pipeline
+
+### 2. Database
+
+`orchestrator/database.py` is the source of truth for job tracking.
+
+Each job stores:
+
+- file name
+- source path
+- detected type
+- pipeline
+- status
+- output path
+- error details
+- image analysis metadata
+
+The image pipeline now also stores:
+
+- `ai_category`
+- `ai_tags`
+- `ai_summary`
+- `blur_score`
+- `classifier`
+
+### 3. Image Pipeline
+
+`pipelines/image_pipeline/pipeline.py` does the following:
+
+1. copies the source image to `temp/`
+2. computes a local blur score using Laplacian variance
+3. if blurry, routes to `output/images/blurry/`
+4. if clear, sends the temp copy to Gemini for semantic classification
+5. receives structured JSON back from Gemini
+6. resolves the destination folder through `PathResolver`
+7. moves the temp copy into the final output folder
+8. updates the SQLite job row to `DONE` or `FAILED`
+
+### 4. Gemini Integration
+
+Gemini is used only for semantic understanding.
+
+Examples:
+
+- wildlife
+- people
+- portrait
+- landscape
+- document
+- screenshot
+- food
+- architecture
+- product
+
+The API key is loaded from the local `.env` file and is not committed to git.
+
+## Project Structure
 
 ```text
-mediascribe/
-├── .env.example
-├── AGENTS.md
-├── HEARTBEAT.md
-├── README.md
-├── SOUL.md
-├── docker-compose.yml
-├── openclaw.json
-├── data/
-│   └── inbox/
-├── memory/
-│   └── MEMORY_LOG.md
-├── python-service/
-│   ├── .dockerignore
-│   ├── Dockerfile
-│   ├── app.py
-│   ├── requirements.txt
-│   ├── config/
-│   ├── orchestrator/
-│   └── pipelines/
-└── skills/
-    └── media-processor/
-        ├── SKILL.md
-        └── run.js
+LobCut/
+|-- README.md
+|-- main.py
+|-- requirements.txt
+|-- .env.example
+|-- config/
+|-- dashboard/
+|-- docs/
+|-- orchestrator/
+|-- pipelines/
+|-- python-service/
+|-- tests/
+|-- input/
+|-- output/
+|-- temp/
+`-- logs/
 ```
-
-## Architecture
-
-```text
-Telegram
-  -> OpenClaw gateway
-  -> media-processor skill
-  -> FastAPI python-service
-  -> shared OpenClaw pipeline modules
-     - config/
-     - orchestrator/
-     - pipelines/
-  -> SQLite + output folders + memory log
-```
-
-## Prerequisites
-
-| Requirement | Notes |
-|---|---|
-| Windows 11 or Windows 10 | With WSL2 enabled |
-| WSL2 | Ubuntu 22.04 recommended |
-| Docker Desktop | WSL2 backend must be enabled |
-| Node.js 22 | Needed for the OpenClaw gateway |
-| Telegram bot token | Create with [@BotFather](https://t.me/BotFather) |
-| Telegram allowed user ID | Get from [@userinfobot](https://t.me/userinfobot) |
-| Gemini API key | Used by the Python image pipeline |
-| Anthropic API key | Used by the OpenClaw gateway runtime |
 
 ## Setup
 
-### 1. Clone the repo
+Install dependencies:
 
-```bash
-git clone <your-repo-url>
-cd mediascribe
+```powershell
+py -m pip install -r requirements.txt
 ```
 
-### 2. Prepare `.env`
-
-```bash
-cp .env.example .env
-```
-
-Fill in:
-
-- `GEMINI_API_KEY`
-- `ANTHROPIC_API_KEY`
-- `TELEGRAM_BOT_TOKEN`
-- `TELEGRAM_ALLOWED_USER_ID`
-- `WATCH_INBOX`
-
-Use a WSL2-visible path for `WATCH_INBOX`, for example:
+Create a local `.env` file:
 
 ```env
-WATCH_INBOX=/mnt/c/Users/YourName/Videos/mediascribe-inbox
+GEMINI_API_KEY=your_real_gemini_api_key_here
 ```
 
-If you do not set `WATCH_INBOX`, Docker Compose will use `./data/inbox`.
+You can copy the shape from `.env.example`.
 
-### 3. Start the stack
+## Run LobCut
 
-```bash
+Start the watcher:
+
+```powershell
+py main.py
+```
+
+Then drop images into:
+
+```text
+input/images/
+```
+
+## Run With Docker
+
+```powershell
 docker compose up --build
 ```
 
-This starts:
+For dashboard development:
 
-- `python-service` on `http://localhost:8000`
-- `openclaw` gateway on port `18789`
-
-### 4. Pair Telegram with OpenClaw
-
-After the gateway is running, message your bot and complete the OpenClaw pairing flow.
-
-### 5. Verify the Python service
-
-```bash
-curl http://localhost:8000/health
+```powershell
+docker compose --profile dev up dashboard
 ```
 
-Expected response:
+## Electron Desktop App
 
-```json
-{
-  "status": "ok",
-  "service": "mediascribe-python",
-  "gemini_configured": true,
-  "memory_log": "/app/memory/MEMORY_LOG.md"
-}
+Install the Electron wrapper dependencies:
+
+```powershell
+cd electron-app
+npm install
 ```
 
-## API Endpoints
+Run the desktop app in development:
 
-| Route | Purpose |
-|---|---|
-| `POST /process/image` | Run the image pipeline |
-| `POST /process/video` | Run the video pipeline and generate `.srt` subtitles |
-| `GET /jobs` | Return recent jobs from SQLite |
-| `GET /health` | Service health check |
+```powershell
+npm start
+```
 
-## Usage Examples
+To use the desktop shell with services you already started locally, skip Docker:
 
-| What you send to Telegram | What comes back |
-|---|---|
-| `/mnt/c/Users/You/Pictures/elephant.webp` | Image category, tags, summary, blur score, classifier, output path |
-| `/mnt/c/Users/You/Videos/lecture.mp4` | Video summary, transcript preview, subtitle path, duration |
-| `process this /mnt/c/Users/You/Pictures/screenshot.png` | Processed image result using the `media-processor` skill |
-| `show job history` | Recent jobs from SQLite and memory |
-| `what wildlife images did I process this week?` | Recall summary based on `MEMORY_LOG.md` |
+```powershell
+$env:LOBCUT_SKIP_DOCKER="1"
+npm start
+```
 
-## Troubleshooting
+The app starts `docker compose up -d` from the project root, waits for
+`http://localhost:8000/health`, and then opens the local dashboard file. Docker
+output is written to `~/lobcut-logs/docker.log`.
 
-| Problem | What to check |
-|---|---|
-| `python-service` will not start | Run `docker compose logs python-service` and confirm `.env` has a valid `GEMINI_API_KEY` |
-| OpenCV errors in the container | Rebuild the image and confirm Docker Desktop has enough memory |
-| Gemini quota or temporary API issues | The image pipeline retries first, then falls back to a heuristic classifier |
-| Video processing fails | Confirm `ffmpeg` is available in the container and the file is a supported video format |
-| No subtitles returned | Check `docker compose logs python-service` for Whisper/FFmpeg errors |
-| OpenClaw cannot reach the service | Confirm `python-service` is healthy and `MEDIA_SERVICE_URL` is `http://python-service:8000` inside Compose |
-| Windows path is not found | Use WSL2-visible paths like `/mnt/c/...` when sending files through Telegram |
-| Memory log is not updating | Confirm `./memory` is mounted and `MEMORY_LOG.md` is writable |
+Build distributables:
 
-## Tech Stack
+```powershell
+npm run build
+```
 
-| Layer | Technology |
-|---|---|
-| Agent runtime | OpenClaw |
-| Channel | Telegram |
-| Gateway runtime | Node.js 22 |
-| Python API | FastAPI |
-| Image quality check | OpenCV |
-| Image classification | Gemini Flash via `google-genai` |
-| Video transcription | OpenAI Whisper |
-| Subtitle generation | SRT generation from Whisper segments |
-| Media processing | FFmpeg |
-| Job tracking | SQLite |
-| Persistent memory | `MEMORY_LOG.md` |
-| Containers | Docker Compose on WSL2 |
+The builder is configured for macOS `.dmg`, Linux `.AppImage`, and Windows
+`nsis` targets.
 
-## Notes
+## Test Scripts
 
-- Secrets stay in `.env` only.
-- The service copies source media into temp/output paths before processing.
-- Unknown file types are quarantined through the shared orchestrator logic.
-- Video API processing preserves subtitle generation and returns `subtitle_path`.
+### Phase 1 test
+
+```powershell
+py tests\test_phase1.py --self-contained
+```
+
+### Phase 2 mocked test
+
+This validates the full image pipeline flow without real Gemini calls:
+
+```powershell
+py tests\test_phase2.py --self-contained
+```
+
+### Live Gemini smoke test
+
+This tests one real image against Gemini:
+
+```powershell
+py tests\test_gemini_image.py "D:\path\to\image.png"
+```
+
+## Security Notes
+
+- `.env` is ignored by git
+- local runtime media is ignored by git
+- logs, temp files, and the SQLite DB are ignored by git
+- if an API key is ever exposed, revoke it and generate a fresh one
+
+## What Has Been Completed
+
+### Phase 0
+
+- base folder structure
+- configuration layout
+- logger
+- database bootstrap
+
+### Phase 1
+
+- watcher
+- router
+- file stability checks
+- quarantine handling
+- duplicate protection
+- DB-backed job tracking
+
+### Phase 2
+
+- local blur detection
+- Gemini semantic image classification
+- AI-driven category folders
+- `.env`-based key loading
+- retry and fallback behavior for model requests
+- mocked and live test scripts
+
+## What Is Left
+
+### Near-term polish
+
+- reduce noisy HTTP debug logs
+- add cleaner startup diagnostics for Gemini readiness
+- improve user-facing error messages for quota or API failures
+- decide whether some categories should collapse into simpler folders
+  - for example, `portrait` -> `people`
+
+### Phase 3
+
+Video pipeline:
+
+- transcription
+- subtitle generation
+- subtitle burn-in
+- output to `output/videos/`
+
+### Phase 4
+
+Clip intelligence:
+
+- highlight detection
+- silence gap trimming
+- keyword-triggered clip extraction
+
+## Summary
+
+LobCut is no longer just a folder watcher.
+
+It is now a working local agent that:
+
+- monitors incoming media
+- classifies images intelligently
+- separates blurry images locally
+- uses Gemini for semantic understanding
+- organizes files into output folders
+- tracks every step in SQLite
+
+The image side is live.
+The next major milestone is the video pipeline.

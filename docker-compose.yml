@@ -1,68 +1,95 @@
 services:
-  python-service:
+  orchestrator:
     build:
-      context: ./python-service
+      context: .
       dockerfile: Dockerfile
-    env_file:
-      - ../.env
-    container_name: mediascribe-python
+    volumes:
+      - ./input:/app/input
+      - ./output:/app/output
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ${WATCH_HOST_INPUT:-./input}:/watch/user-input
+      # Add extra host watch folders here, then map them with WATCH_PATH_MAPPINGS.
+      # Example:
+      # - D:/Z-work/Input:/watch/z-work-input
+    environment:
+      - DB_PATH=/app/data/jobs.db
+      # Example: WATCH_PATH_MAPPINGS=D:\Z-work\Input=/watch/z-work-input
+      - WATCH_PATH_MAPPINGS=${WATCH_PATH_MAPPINGS}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+    restart: unless-stopped
+    command: python main.py
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
     ports:
       - "8000:8000"
     volumes:
-      - ./python-service:/app
-      - ../../output:/app/output
-      - mediascribe-db:/app/data
-      - ./memory:/app/memory
-      - ${WATCH_INBOX:-./data/inbox}:/watch/inbox:ro
-      - ../../input:/watch/input:ro
+      - ./input:/app/input:ro
+      - ./data:/app/data
+      - ./output:/app/output
+      - ./dashboard/dist:/app/dashboard/dist:ro
+      - ./openclaw-workspace:/app/openclaw-workspace:ro
     environment:
-      - INPUT_ROOT=/watch/input
-      - DB_PATH=/app/data/mediascribe.db
-      - TEMP_DIR=/tmp/mediascribe
-      - OUTPUT_DIR=/app/output
-      - MEMORY_LOG_PATH=/app/memory/MEMORY_LOG.md
-      - BURN_SUBTITLES=true
-      - PYTHONUNBUFFERED=1
-      - OPENAI_API_KEY=${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}
+      - DB_PATH=/app/data/jobs.db
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
+      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
+      - GOOGLE_REDIRECT_URI=http://localhost:8000/auth/callback
+      - JWT_SECRET=${JWT_SECRET}
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
-      - MEDIA_SERVICE_URL=http://python-service:8000
+      - CORS_ALLOW_ORIGINS=http://localhost:3000
+      - DASHBOARD_URL=http://localhost:3000
+      - OPENCLAW_GATEWAY_URL=http://openclaw:18789
+      - OPENCLAW_PUBLIC_URL=http://localhost:18789
     restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=5)"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
+    command: uvicorn app:app --app-dir python-service --host 0.0.0.0 --port 8000
 
   openclaw:
     image: node:22-slim
-    env_file:
-      - ../.env
-    container_name: mediascribe-openclaw
     working_dir: /app
     volumes:
-      - ./openclaw.json:/app/openclaw.json:ro
-      - ./SOUL.md:/app/workspace/SOUL.md:ro
-      - ./AGENTS.md:/app/workspace/AGENTS.md:ro
-      - ./HEARTBEAT.md:/app/workspace/HEARTBEAT.md
-      - ./skills:/app/workspace/skills:ro
-      - ./memory:/app/workspace/memory
-      - ../../input:/watch/input:ro
+      - ./openclaw-workspace/openclaw.json:/app/openclaw.json:ro
+      - ./openclaw-workspace/SOUL.md:/app/workspace/SOUL.md:ro
+      - ./openclaw-workspace/AGENTS.md:/app/workspace/AGENTS.md:ro
+      - ./openclaw-workspace/HEARTBEAT.md:/app/workspace/HEARTBEAT.md
+      - ./openclaw-workspace/skills:/app/workspace/skills:ro
+      - ./openclaw-workspace/memory:/app/workspace/memory
+      - ./input:/watch/input:ro
       - openclaw-data:/root/.openclaw
     environment:
-      - MEDIA_SERVICE_URL=http://python-service:8000
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - TELEGRAM_ALLOWED_USER_ID=${TELEGRAM_ALLOWED_USER_ID}
+      - MEDIA_SERVICE_URL=http://api:8000
     ports:
       - "18789:18789"
     command: >
-      sh -c "rm -rf /usr/local/lib/node_modules/openclaw &&
-             npm install -g openclaw@latest &&
+      sh -c "npm install -g openclaw@latest &&
              mkdir -p /root/.openclaw &&
              cp /app/openclaw.json /root/.openclaw/openclaw.json &&
              openclaw gateway --port 18789 --allow-unconfigured"
     depends_on:
-      python-service:
-        condition: service_healthy
+      api:
+        condition: service_started
+    profiles:
+      - openclaw
     restart: unless-stopped
 
+  dashboard:
+    image: node:20-alpine
+    working_dir: /app
+    volumes:
+      - ./dashboard:/app
+      - /app/node_modules
+    ports:
+      - "3000:3000"
+    command: sh -c "npm install && npm run dev -- --host"
+    profiles:
+      - dev
+
 volumes:
-  mediascribe-db:
   openclaw-data:

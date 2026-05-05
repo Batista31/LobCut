@@ -1,6 +1,6 @@
 """
 config/logger.py
-Centralised logging for OpenClaw.
+Centralised logging for LobCut.
 Call get_logger(__name__) in every module.
 """
 
@@ -40,6 +40,9 @@ def _configure_root() -> None:
     sh = logging.StreamHandler(sys.stdout)
     sh.setFormatter(_FORMATTER)
     root.addHandler(sh)
+
+    for noisy_logger in ("numba", "httpcore", "httpx", "google_genai"):
+        logging.getLogger(noisy_logger).setLevel(logging.WARNING)
 
     _configured = True
 

@@ -1,6 +1,6 @@
 """
 pipelines/image_pipeline/pipeline.py
-Phase 2 image processing pipeline for OpenClaw.
+Phase 2 image processing pipeline for LobCut.
 """
 
 from __future__ import annotations
@@ -35,6 +35,26 @@ log = get_logger(__name__)
 
 _gemini_client = None
 _dotenv_loaded = False
+_gemini_quota_blocked_until = 0.0
+
+
+def _mark_gemini_quota_blocked(exc: Exception) -> None:
+    global _gemini_quota_blocked_until
+
+    message = str(exc)
+    if "RESOURCE_EXHAUSTED" not in message and "quota" not in message.lower():
+        return
+
+    _gemini_quota_blocked_until = time.time() + 60 * 60
+
+
+def _raise_if_gemini_quota_blocked() -> None:
+    if time.time() < _gemini_quota_blocked_until:
+        remaining_minutes = max(1, int((_gemini_quota_blocked_until - time.time()) / 60))
+        raise RuntimeError(
+            f"Gemini quota is exhausted. AI classification is paused for about {remaining_minutes} more minute(s); "
+            "retry later or switch to a paid/higher-quota key."
+        )
 
 
 def _fallback_classification(source: Path, error: Exception) -> dict:
@@ -136,7 +156,7 @@ def _get_gemini_client():
     api_key = os.getenv(GEMINI_API_KEY_ENV_VAR)
     if not api_key:
         raise RuntimeError(
-            f"{GEMINI_API_KEY_ENV_VAR} is not set. Configure the Gemini API key before starting OpenClaw."
+            f"{GEMINI_API_KEY_ENV_VAR} is not set. Configure the Gemini API key before starting LobCut."
         )
 
     _gemini_client = genai.Client(api_key=api_key)
@@ -160,6 +180,8 @@ def _is_blurry(score: float) -> bool:
 
 
 def _classify_with_gemini(image_path: Path) -> dict:
+    _raise_if_gemini_quota_blocked()
+
     client = _get_gemini_client()
     try:
         from google.genai import errors as genai_errors
@@ -240,6 +262,14 @@ def _classify_with_gemini(image_path: Path) -> dict:
                 except Exception as exc:
                     last_error = exc
                     status_code = getattr(exc, "status_code", None)
+                    message = str(exc)
+                    if status_code == 429 or "RESOURCE_EXHAUSTED" in message or "quota" in message.lower():
+                        _mark_gemini_quota_blocked(exc)
+                        raise RuntimeError(
+                            "Gemini quota/rate limit hit. AI classification has been paused to avoid wasting credits. "
+                            f"Original error: {exc}"
+                        ) from exc
+
                     is_retryable = status_code in {429, 500, 503}
                     if genai_errors is not None and isinstance(exc, getattr(genai_errors, "ServerError", tuple())):
                         is_retryable = True

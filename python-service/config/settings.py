@@ -1,6 +1,7 @@
 """
 config/settings.py
-Single source of truth for MediaScribe's embedded OpenClaw pipelines.
+Single source of truth for LobCut.
+No other module may hardcode paths, extensions, or thresholds.
 """
 
 import json
@@ -10,44 +11,28 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 
 
-def _bool_from_env(name: str, default: bool) -> bool:
-    raw = os.getenv(name)
-    if raw is None:
-        return default
-    return raw.strip().lower() in {"1", "true", "yes", "on"}
+def _path_from_env(name: str, default: Path) -> Path:
+    value = os.environ.get(name)
+    return Path(value).expanduser() if value else default
 
+INPUT_VIDEOS = ROOT / "input" / "videos"
+INPUT_IMAGES = ROOT / "input" / "images"
 
-def _path_from_env(name: str, default: Path | str) -> Path:
-    raw = os.getenv(name)
-    if raw:
-        return Path(raw).expanduser()
-    return Path(default)
-
-
-INPUT_ROOT = _path_from_env("INPUT_ROOT", ROOT / "input")
-INPUT_VIDEOS = _path_from_env("INPUT_VIDEOS", INPUT_ROOT / "videos")
-INPUT_IMAGES = _path_from_env("INPUT_IMAGES", INPUT_ROOT / "images")
-
-OUTPUT_ROOT = _path_from_env("OUTPUT_DIR", ROOT / "output")
-OUTPUT_VIDEOS = OUTPUT_ROOT / "videos"
-OUTPUT_IMAGES = OUTPUT_ROOT / "images"
+OUTPUT_VIDEOS = ROOT / "output" / "videos"
+OUTPUT_IMAGES = ROOT / "output" / "images"
 OUTPUT_BLURRY = OUTPUT_IMAGES / "blurry"
 OUTPUT_PEOPLE = OUTPUT_IMAGES / "people"
 OUTPUT_OTHERS = OUTPUT_IMAGES / "others"
 
-TEMP_DIR = _path_from_env("TEMP_DIR", ROOT / "temp")
+TEMP_DIR = ROOT / "temp"
 
-LOGS_DIR = _path_from_env("LOGS_DIR", ROOT / "logs")
-LOG_FILE = _path_from_env("LOG_FILE", LOGS_DIR / "openclaw.log")
-LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
+LOGS_DIR = ROOT / "logs"
+LOG_FILE = LOGS_DIR / "lobcut.log"
+LOG_LEVEL = "DEBUG"
 LOG_MAX_BYTES = 5 * 1024 * 1024
 LOG_BACKUP_COUNT = 3
 
 DB_PATH = _path_from_env("DB_PATH", ROOT / "orchestrator" / "jobs.db")
-MEMORY_LOG_PATH = _path_from_env(
-    "MEMORY_LOG_PATH",
-    Path.home() / ".openclaw" / "workspace" / "mediascribe" / "memory" / "MEMORY_LOG.md",
-)
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".tif", ".webp", ".heic"}
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi", ".mkv", ".wmv", ".flv", ".webm", ".m4v"}
@@ -91,8 +76,6 @@ GEMINI_BASE_CATEGORIES = (
 DEFAULT_IMAGE_CATEGORY = "other"
 
 JOB_DISPATCH_POLL_INTERVAL = 1.0
-ENABLE_FOLDER_PROCESSOR = _bool_from_env("ENABLE_FOLDER_PROCESSOR", True)
-FOLDER_PROCESSOR_POLL_INTERVAL = float(os.getenv("FOLDER_PROCESSOR_POLL_INTERVAL", "5.0"))
 
 PIPELINE_IMAGE = "image_pipeline"
 PIPELINE_VIDEO = "video_pipeline"
@@ -105,8 +88,8 @@ MAX_HIGHLIGHTS = 5
 MIN_HIGHLIGHT_GAP_SEC = 15
 CLIP_PRE_BUFFER_SEC = 5
 CLIP_POST_BUFFER_SEC = 10
-BURN_SUBTITLES = _bool_from_env("BURN_SUBTITLES", False)
-TRIM_SILENCE = _bool_from_env("TRIM_SILENCE", False)
+BURN_SUBTITLES = False
+TRIM_SILENCE = False
 GEMINI_RERANK_CLIPS = True
 BUILD_HIGHLIGHT_REEL = True
 MAX_REEL_CLIPS = 5
