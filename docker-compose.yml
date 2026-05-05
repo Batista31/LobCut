@@ -13,6 +13,7 @@ services:
       # Example:
       # - D:/Z-work/Input:/watch/z-work-input
     environment:
+      - PYTHONPATH=/app/python-service
       - DB_PATH=/app/data/jobs.db
       # Example: WATCH_PATH_MAPPINGS=D:\Z-work\Input=/watch/z-work-input
       - WATCH_PATH_MAPPINGS=${WATCH_PATH_MAPPINGS}

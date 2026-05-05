@@ -25,6 +25,8 @@ export type Job = {
   output_path?: string | null;
   srt_path?: string | null;
   transcript?: string | null;
+  game_genre?: string | null;
+  game_title?: string | null;
   video_duration?: number | null;
   image_url?: string | null;
   created_at: string;
@@ -84,7 +86,7 @@ export const api = {
   jobs: () => apiFetch<Job[]>('/jobs'),
   job: (id: number) => apiFetch<Job>(`/jobs/${id}`),
   retryJob: (id: number) => apiFetch<{ status: string }>(`/jobs/retry/${id}`, { method: 'POST' }),
-  deleteJob: (id: number) => apiFetch<{ status: string }>(`/jobs/${id}`, { method: 'DELETE' }),
+  deleteJob: (id: number) => apiFetch<{ deleted: boolean; job_id: number }>(`/jobs/${id}`, { method: 'DELETE' }),
   watchers: () => apiFetch<Watcher[]>('/watchers'),
   addWatcher: (body: { path: string; pipeline_override?: string }) =>
     apiFetch<Watcher>('/watchers', {

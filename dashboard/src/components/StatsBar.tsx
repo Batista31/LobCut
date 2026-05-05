@@ -12,6 +12,7 @@ export function StatsBar({ jobs, polling }: Props) {
 
   return (
     <section className="statsBar">
+      <p className="jobSummary">Showing {jobs.length} jobs - {done} done, {failed} failed, {processing} processing</p>
       <span className={`liveDot ${polling ? 'active' : ''}`} />
       <div><strong>{jobs.length}</strong><span>Total</span></div>
       <div><strong>{done}</strong><span>Done</span></div>

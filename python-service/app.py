@@ -3,7 +3,9 @@ from __future__ import annotations
 import os
 import re
 import secrets
+import sqlite3
 import sys
+import mimetypes
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
@@ -12,7 +14,7 @@ from urllib.parse import urlencode
 import httpx
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from jose import JWTError, jwt
 from pydantic import BaseModel, Field
@@ -35,11 +37,10 @@ from orchestrator.database import (
     retry_job,
     set_telegram_chat_id,
     set_watcher_enabled,
-    soft_delete_job,
     upsert_user,
 )
 
-VERSION = "1.0.0"
+VERSION = "1.0.1-preview-stream"
 COOKIE_NAME = "lobcut_token"
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRY_DAYS = 7
@@ -96,6 +97,8 @@ class JobOut(BaseModel):
     output_path: Optional[str] = None
     srt_path: Optional[str] = None
     transcript: Optional[str] = None
+    game_genre: Optional[str] = None
+    game_title: Optional[str] = None
     video_duration: Optional[float] = None
     image_url: Optional[str] = None
     created_at: str
@@ -154,6 +157,38 @@ def _is_image_job(data: dict) -> bool:
     }
 
 
+def _image_media_type(path: Path) -> str:
+    mime_type, _ = mimetypes.guess_type(str(path))
+    if mime_type:
+        return mime_type
+    return {
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".jfif": "image/jpeg",
+        ".png": "image/png",
+        ".gif": "image/gif",
+        ".bmp": "image/bmp",
+        ".tif": "image/tiff",
+        ".tiff": "image/tiff",
+        ".webp": "image/webp",
+        ".avif": "image/avif",
+        ".heic": "image/heic",
+    }.get(path.suffix.lower(), "application/octet-stream")
+
+
+def _stream_image(path: Path) -> StreamingResponse:
+    def iterator():
+        with path.open("rb") as file:
+            while chunk := file.read(1024 * 1024):
+                yield chunk
+
+    return StreamingResponse(
+        iterator(),
+        media_type=_image_media_type(path),
+        headers={"Content-Disposition": f'inline; filename="{path.name}"'},
+    )
+
+
 def _job_out(row) -> JobOut:
     data = _row_to_dict(row)
     if _is_image_job(data):
@@ -179,6 +214,34 @@ def _resolve_media_path(raw_path: str) -> Path:
     if not resolved.exists() or not resolved.is_file():
         raise HTTPException(status_code=404, detail="File not found.")
     return resolved
+
+
+def _first_existing_media_path(*raw_paths: Optional[str]) -> Path:
+    last_error: HTTPException | None = None
+    for raw_path in raw_paths:
+        if not raw_path:
+            continue
+        try:
+            return _resolve_media_path(raw_path)
+        except HTTPException as exc:
+            last_error = exc
+    if last_error is not None:
+        raise last_error
+    raise HTTPException(status_code=404, detail="File not found.")
+
+
+def _delete_job_row(job_id: int, user_id: str) -> bool:
+    with sqlite3.connect(DB_PATH) as conn:
+        cur = conn.execute(
+            """
+            DELETE FROM jobs
+            WHERE id = ?
+              AND (user_id = ? OR user_id = 'local')
+            """,
+            (job_id, user_id),
+        )
+        conn.commit()
+    return cur.rowcount > 0
 
 
 def _watcher_out(row) -> WatcherOut:
@@ -402,7 +465,7 @@ def get_job(job_id: int, user: dict = Depends(get_current_user)) -> JobOut:
 
 
 @app.get("/jobs/{job_id}/image")
-def get_job_image(job_id: int, user: dict = Depends(get_current_user)) -> FileResponse:
+def get_job_image(job_id: int, user: dict = Depends(get_current_user)) -> StreamingResponse:
     row = get_job_by_id(job_id, user_id=user["sub"]) or get_job_by_id(job_id, user_id="local")
     if row is None or row["status"] == STATUS_DELETED:
         raise HTTPException(status_code=404, detail="Job not found.")
@@ -411,8 +474,22 @@ def get_job_image(job_id: int, user: dict = Depends(get_current_user)) -> FileRe
     if not _is_image_job(data):
         raise HTTPException(status_code=404, detail="Job is not an image.")
 
-    raw_path = data.get("output_path") or data.get("source_path")
-    return FileResponse(_resolve_media_path(raw_path))
+    path = _first_existing_media_path(data.get("output_path"), data.get("source_path"))
+    return _stream_image(path)
+
+
+@app.get("/jobs/{job_id}/preview")
+def get_job_preview(job_id: int, user: dict = Depends(get_current_user)) -> StreamingResponse:
+    row = get_job_by_id(job_id, user_id=user["sub"]) or get_job_by_id(job_id, user_id="local")
+    if row is None or row["status"] == STATUS_DELETED:
+        raise HTTPException(status_code=404, detail="Job not found.")
+
+    data = _row_to_dict(row)
+    if not _is_image_job(data):
+        raise HTTPException(status_code=404, detail="Job is not an image.")
+
+    path = _first_existing_media_path(data.get("source_path"), data.get("output_path"))
+    return _stream_image(path)
 
 
 @app.post("/jobs/retry/{job_id}")
@@ -423,10 +500,10 @@ def retry_existing_job(job_id: int, user: dict = Depends(get_current_user)) -> d
 
 
 @app.delete("/jobs/{job_id}")
-def delete_existing_job(job_id: int, user: dict = Depends(get_current_user)) -> dict[str, str]:
-    if not soft_delete_job(job_id, user["sub"]):
+def delete_existing_job(job_id: int, user: dict = Depends(get_current_user)) -> dict[str, bool | int]:
+    if not _delete_job_row(job_id, user["sub"]):
         raise HTTPException(status_code=404, detail="Job not found.")
-    return {"status": STATUS_DELETED}
+    return {"deleted": True, "job_id": job_id}
 
 
 @app.get("/watchers", response_model=list[WatcherOut])

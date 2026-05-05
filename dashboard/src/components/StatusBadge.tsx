@@ -3,6 +3,6 @@ type Props = {
 };
 
 export function StatusBadge({ status }: Props) {
-  const key = status.toLowerCase();
+  const key = status.toLowerCase().replace(/[^a-z0-9]+/g, '-');
   return <span className={`statusBadge ${key}`}>{status}</span>;
 }
