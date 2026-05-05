@@ -24,5 +24,5 @@ export function useJobs() {
     return () => window.clearInterval(timer);
   }, [refresh]);
 
-  return { jobs, loading, polling, refresh };
+  return { jobs, loading, polling, refresh, setJobs };
 }

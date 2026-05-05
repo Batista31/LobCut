@@ -6,6 +6,7 @@ Phase 2 image processing pipeline for LobCut.
 from __future__ import annotations
 
 import json
+import mimetypes
 import os
 import shutil
 import time
@@ -36,6 +37,25 @@ log = get_logger(__name__)
 _gemini_client = None
 _dotenv_loaded = False
 _gemini_quota_blocked_until = 0.0
+
+
+def _image_mime_type(path: Path) -> str:
+    mime_type, _ = mimetypes.guess_type(str(path))
+    if mime_type:
+        return mime_type
+    return {
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".jfif": "image/jpeg",
+        ".png": "image/png",
+        ".gif": "image/gif",
+        ".bmp": "image/bmp",
+        ".tif": "image/tiff",
+        ".tiff": "image/tiff",
+        ".webp": "image/webp",
+        ".avif": "image/avif",
+        ".heic": "image/heic",
+    }.get(path.suffix.lower(), "application/octet-stream")
 
 
 def _mark_gemini_quota_blocked(exc: Exception) -> None:
@@ -187,6 +207,10 @@ def _classify_with_gemini(image_path: Path) -> dict:
         from google.genai import errors as genai_errors
     except ImportError:
         genai_errors = None
+    try:
+        from google.genai import types as genai_types
+    except ImportError:
+        genai_types = None
 
     prompt = (
         "Classify this image for an autonomous media organizer. "
@@ -227,7 +251,37 @@ def _classify_with_gemini(image_path: Path) -> dict:
         "additionalProperties": False,
     }
 
-    uploaded_file = client.files.upload(file=str(image_path))
+    mime_type = _image_mime_type(image_path)
+    upload_attempts = []
+    if genai_types is not None:
+        upload_attempts.append(
+            lambda: client.files.upload(
+                file=str(image_path),
+                config=genai_types.UploadFileConfig(mime_type=mime_type),
+            )
+        )
+    upload_attempts.extend(
+        [
+            lambda: client.files.upload(file=str(image_path), config={"mime_type": mime_type}),
+            lambda: client.files.upload(file=str(image_path), mime_type=mime_type),
+            lambda: client.files.upload(path=str(image_path), mime_type=mime_type),
+        ]
+    )
+
+    uploaded_file = None
+    upload_errors = []
+    for upload in upload_attempts:
+        try:
+            uploaded_file = upload()
+            break
+        except Exception as exc:
+            upload_errors.append(str(exc))
+            continue
+    if uploaded_file is None:
+        raise RuntimeError(
+            f"Gemini upload failed for {image_path.name} with mime_type={mime_type}: "
+            + " | ".join(upload_errors)
+        )
     try:
         response = None
         last_error = None

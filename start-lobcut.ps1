@@ -4,6 +4,7 @@ param(
     [switch]$WithOpenClaw,
     [switch]$NoBuild,
     [switch]$Rebuild,
+    [switch]$Logs,
     [switch]$Stop
 )
 
@@ -276,3 +277,9 @@ Write-Host ""
 Write-Host "Useful commands:"
 Write-Host "  .\start-lobcut.ps1 -Stop"
 Write-Host "  docker compose logs -f"
+
+if ($Logs) {
+    Write-Host ""
+    Write-Host "Following LobCut service logs. Press Ctrl+C to stop viewing logs." -ForegroundColor Cyan
+    docker compose logs -f orchestrator api dashboard
+}

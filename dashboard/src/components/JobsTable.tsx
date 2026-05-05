@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { api, type Job } from '../api';
 import { StatusBadge } from './StatusBadge';
 
@@ -8,22 +9,54 @@ type Props = {
   loading: boolean;
   polling: boolean;
   refresh: () => Promise<void>;
+  onDeleteLocal: (jobId: number) => void;
+  onToast: (message: string) => void;
   onSelect: (job: Job) => void;
   selectedId: number | null;
 };
 
-export function JobsTable({ jobs, loading, polling, refresh, onSelect, selectedId }: Props) {
+export function JobsTable({ jobs, loading, polling, refresh, onDeleteLocal, onToast, onSelect, selectedId }: Props) {
+  const [copiedJobId, setCopiedJobId] = useState<number | null>(null);
+
+  const copy = async (job: Job) => {
+    if (!job.output_path) return;
+    try {
+      await navigator.clipboard.writeText(job.output_path);
+      setCopiedJobId(job.id);
+      window.setTimeout(() => setCopiedJobId(null), 2000);
+    } catch (error) {
+      onToast(error instanceof Error ? error.message : 'Could not copy output path');
+    }
+  };
+
   const retry = async (job: Job) => {
-    await api.retryJob(job.id);
-    await refresh();
+    try {
+      await api.retryJob(job.id);
+      await refresh();
+      onToast(`Job #${job.id} queued`);
+    } catch (error) {
+      onToast(error instanceof Error ? error.message : `Could not retry job #${job.id}`);
+    }
   };
 
   const remove = async (job: Job) => {
-    await api.deleteJob(job.id);
-    await refresh();
+    if (!window.confirm(`Delete job #${job.id} and remove from database?`)) {
+      return;
+    }
+    try {
+      await api.deleteJob(job.id);
+      onDeleteLocal(job.id);
+      onToast(`Job #${job.id} deleted`);
+    } catch (error) {
+      onToast(error instanceof Error ? error.message : `Could not delete job #${job.id}`);
+    }
   };
 
-  const imageSrc = (job: Job) => job.image_url ? `${API_BASE}${job.image_url}` : null;
+  const previewSrc = (job: Job) => `${API_BASE}/jobs/${job.id}/preview`;
+  const isImage = (job: Job) => (job.detected_type || '').toUpperCase() === 'IMAGE';
+  const isVideo = (job: Job) => (job.detected_type || '').toUpperCase() === 'VIDEO';
+  const doneWithOutput = (job: Job) => job.status === 'DONE' && Boolean(job.output_path);
+  const title = (value: unknown) => String(value ?? '-');
 
   return (
     <section className="tableSection">
@@ -31,24 +64,38 @@ export function JobsTable({ jobs, loading, polling, refresh, onSelect, selectedI
         <h1>Jobs</h1>
         <span><i className={`liveDot ${polling ? 'active' : ''}`} /> live</span>
       </div>
-      <table>
+      <table className="jobsTable">
+        <colgroup>
+          <col style={{ width: '4%' }} />
+          <col style={{ width: '16%' }} />
+          <col style={{ width: '6%' }} />
+          <col style={{ width: '6%' }} />
+          <col style={{ width: '8%' }} />
+          <col style={{ width: '8%' }} />
+          <col style={{ width: '18%' }} />
+          <col style={{ width: '10%' }} />
+          <col style={{ width: '8%' }} />
+          <col style={{ width: '16%' }} />
+        </colgroup>
         <thead>
           <tr>
-            <th>File</th>
-            <th>Preview</th>
-            <th>Type</th>
-            <th>Status</th>
-            <th>Category</th>
-            <th>Location</th>
-            <th>Created</th>
-            <th>Actions</th>
+            <th title="ID">ID</th>
+            <th title="Filename">Filename</th>
+            <th title="User">User</th>
+            <th title="Type">Type</th>
+            <th title="Status">Status</th>
+            <th title="Category">Category</th>
+            <th title="Path">Path</th>
+            <th title="Date">Date</th>
+            <th title="Actions">Actions</th>
+            <th title="Output">Output</th>
           </tr>
         </thead>
         <tbody>
           {loading ? (
-            <tr><td colSpan={8}>Loading jobs...</td></tr>
+            <tr><td colSpan={10}>Loading jobs...</td></tr>
           ) : jobs.length === 0 ? (
-            <tr><td colSpan={8}>No jobs yet.</td></tr>
+            <tr><td colSpan={10}>No jobs yet.</td></tr>
           ) : (
             jobs.map((job) => (
               <tr
@@ -56,25 +103,34 @@ export function JobsTable({ jobs, loading, polling, refresh, onSelect, selectedI
                 className={selectedId === job.id ? 'selected' : ''}
                 onClick={() => onSelect(job)}
               >
-                <td><code>#{job.id}</code> {job.filename}</td>
-                <td>
-                  {imageSrc(job) ? (
-                    <img className="jobThumb" src={imageSrc(job) ?? ''} alt="" loading="lazy" />
-                  ) : (
-                    <span className="emptyPreview">-</span>
-                  )}
-                </td>
-                <td><span className="typeBadge">{job.detected_type || 'UNKNOWN'}</span></td>
-                <td><StatusBadge status={job.status} /></td>
-                <td>
+                <td title={title(job.id)}><code>#{job.id}</code></td>
+                <td title={job.filename}>{job.filename}</td>
+                <td title={job.user_id}>{job.user_id}</td>
+                <td title={title(job.detected_type || 'UNKNOWN')}><span className="typeBadge">{job.detected_type || 'UNKNOWN'}</span></td>
+                <td title={job.status}><StatusBadge status={job.status} /></td>
+                <td title={title(job.ai_category || job.error_message || '-')}>
                   {job.ai_category || '-'}
                   {job.error_message ? <div className="errorText">{job.error_message}</div> : null}
                 </td>
-                <td><code className="pathText">{job.output_path || job.source_path}</code></td>
-                <td>{job.created_at}</td>
-                <td>
-                  <button type="button" onClick={(event) => { event.stopPropagation(); void retry(job); }}>Retry</button>
-                  <button type="button" className="dangerButton" onClick={(event) => { event.stopPropagation(); void remove(job); }}>Delete</button>
+                <td title={job.source_path}><code className="pathText">{job.source_path}</code></td>
+                <td title={job.created_at}>{job.created_at}</td>
+                <td title="Retry or delete this job">
+                  <div className="actionGroup">
+                    <button type="button" className="compactButton" title="Retry job" onClick={(event) => { event.stopPropagation(); void retry(job); }}>Retry</button>
+                    <button type="button" className="compactButton dangerButton" title="Delete job" onClick={(event) => { event.stopPropagation(); void remove(job); }}>Del</button>
+                  </div>
+                </td>
+                <td title={title(job.output_path || '-')}>
+                  {doneWithOutput(job) ? (
+                    <button type="button" className="outputButton" onClick={(event) => { event.stopPropagation(); void copy(job); }}>
+                      {isImage(job) ? <img className="outputThumb" src={previewSrc(job)} alt="" loading="lazy" /> : null}
+                      {isVideo(job) ? <span className="filmIcon" aria-hidden="true" /> : null}
+                      <span className="outputLabel">Open Output</span>
+                      {copiedJobId === job.id ? <span className="copiedTooltip">Copied!</span> : null}
+                    </button>
+                  ) : (
+                    <span className="emptyPreview">-</span>
+                  )}
                 </td>
               </tr>
             ))
