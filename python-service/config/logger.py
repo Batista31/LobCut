@@ -10,6 +10,7 @@ from logging.handlers import RotatingFileHandler
 
 from config.settings import (
     LOG_FILE, LOG_LEVEL, LOG_MAX_BYTES, LOG_BACKUP_COUNT, LOGS_DIR,
+    NOISY_LOGGERS, SUPPRESS_HTTP_DEBUG_LOGS,
 )
 
 _FORMATTER = logging.Formatter(
@@ -41,8 +42,9 @@ def _configure_root() -> None:
     sh.setFormatter(_FORMATTER)
     root.addHandler(sh)
 
-    for noisy_logger in ("numba", "httpcore", "httpx", "google_genai"):
-        logging.getLogger(noisy_logger).setLevel(logging.WARNING)
+    if SUPPRESS_HTTP_DEBUG_LOGS:
+        for noisy_logger in NOISY_LOGGERS:
+            logging.getLogger(noisy_logger).setLevel(logging.WARNING)
 
     _configured = True
 

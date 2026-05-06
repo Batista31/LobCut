@@ -22,7 +22,8 @@ OUTPUT_VIDEOS = ROOT / "output" / "videos"
 OUTPUT_IMAGES = ROOT / "output" / "images"
 OUTPUT_BLURRY = OUTPUT_IMAGES / "blurry"
 OUTPUT_PEOPLE = OUTPUT_IMAGES / "people"
-OUTPUT_OTHERS = OUTPUT_IMAGES / "others"
+OUTPUT_OTHERS = OUTPUT_IMAGES / "other"          # singular — matches Gemini's return value
+OUTPUT_UNCLASSIFIED = OUTPUT_IMAGES / "unclassified"  # holding folder for Gemini failures
 
 TEMP_DIR = ROOT / "temp"
 
@@ -74,6 +75,37 @@ GEMINI_BASE_CATEGORIES = (
     "other",
 )
 DEFAULT_IMAGE_CATEGORY = "other"
+STATUS_PENDING_RETRY = "PENDING_RETRY"  # image held in unclassified/, awaiting auto-retry
+UNCLASSIFIED_RETRY_INTERVAL_SEC = 1800  # retry unclassified jobs every 30 minutes
+
+# ------------------------------------
+# CATEGORY COLLAPSING
+# ------------------------------------
+# Set ENABLE_CATEGORY_ALIASES=True in .env to merge similar folders.
+# e.g. portrait + people → people, pet + wildlife → wildlife
+ENABLE_CATEGORY_ALIASES = False
+CATEGORY_ALIASES: dict[str, str] = {
+    "portrait": "people",
+    "pet":      "wildlife",
+    "nature":   "landscape",
+    "indoor":   "architecture",
+}
+
+# ------------------------------------
+# LOG NOISE SUPPRESSION
+# ------------------------------------
+SUPPRESS_HTTP_DEBUG_LOGS = True
+NOISY_LOGGERS = [
+    "httpx",
+    "httpcore",
+    "google.auth",
+    "google.auth.transport",
+    "urllib3",
+    "urllib3.connectionpool",
+    "hpack",
+    "numba",
+    "google_genai",
+]
 
 JOB_DISPATCH_POLL_INTERVAL = 1.0
 

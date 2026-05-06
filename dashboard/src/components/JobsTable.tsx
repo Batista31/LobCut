@@ -16,17 +16,25 @@ type Props = {
 };
 
 export function JobsTable({ jobs, loading, polling, refresh, onDeleteLocal, onToast, onSelect, selectedId }: Props) {
-  const [copiedJobId, setCopiedJobId] = useState<number | null>(null);
+  const [openedJobId, setOpenedJobId] = useState<number | null>(null);
+  const [spinning, setSpinning] = useState(false);
 
-  const copy = async (job: Job) => {
+  const openOutput = (job: Job) => {
     if (!job.output_path) return;
-    try {
-      await navigator.clipboard.writeText(job.output_path);
-      setCopiedJobId(job.id);
-      window.setTimeout(() => setCopiedJobId(null), 2000);
-    } catch (error) {
-      onToast(error instanceof Error ? error.message : 'Could not copy output path');
-    }
+    // Open the file via the API — images show inline, videos download
+    const isImg = (job.detected_type || '').toUpperCase() === 'IMAGE';
+    const url = isImg
+      ? `${API_BASE}/jobs/${job.id}/image`
+      : `${API_BASE}/jobs/${job.id}/download`;
+    window.open(url, '_blank');
+    setOpenedJobId(job.id);
+    window.setTimeout(() => setOpenedJobId(null), 2000);
+  };
+
+  const handleRefresh = async () => {
+    setSpinning(true);
+    await refresh();
+    window.setTimeout(() => setSpinning(false), 600);
   };
 
   const retry = async (job: Job) => {
@@ -62,7 +70,18 @@ export function JobsTable({ jobs, loading, polling, refresh, onDeleteLocal, onTo
     <section className="tableSection">
       <div className="tableHeader">
         <h1>Jobs</h1>
-        <span><i className={`liveDot ${polling ? 'active' : ''}`} /> live</span>
+        <div className="tableHeaderControls">
+          <button
+            type="button"
+            className={`refreshButton ${spinning ? 'spinning' : ''}`}
+            onClick={() => void handleRefresh()}
+            title="Refresh jobs"
+            aria-label="Refresh jobs"
+          >
+            ↻
+          </button>
+          <span><i className={`liveDot ${polling ? 'active' : ''}`} /> live</span>
+        </div>
       </div>
       <table className="jobsTable">
         <colgroup>
@@ -122,11 +141,11 @@ export function JobsTable({ jobs, loading, polling, refresh, onDeleteLocal, onTo
                 </td>
                 <td title={title(job.output_path || '-')}>
                   {doneWithOutput(job) ? (
-                    <button type="button" className="outputButton" onClick={(event) => { event.stopPropagation(); void copy(job); }}>
+                    <button type="button" className="outputButton" onClick={(event) => { event.stopPropagation(); openOutput(job); }}>
                       {isImage(job) ? <img className="outputThumb" src={previewSrc(job)} alt="" loading="lazy" /> : null}
                       {isVideo(job) ? <span className="filmIcon" aria-hidden="true" /> : null}
                       <span className="outputLabel">Open Output</span>
-                      {copiedJobId === job.id ? <span className="copiedTooltip">Copied!</span> : null}
+                      {openedJobId === job.id ? <span className="copiedTooltip">Opened!</span> : null}
                     </button>
                   ) : (
                     <span className="emptyPreview">-</span>

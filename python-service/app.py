@@ -545,6 +545,68 @@ def remove_watcher(watcher_id: int, user: dict = Depends(get_current_user)) -> d
     return {"status": "deleted"}
 
 
+@app.get("/jobs/{job_id}/download")
+def download_job_output(job_id: int, user: dict = Depends(get_current_user)):
+    row = get_job_by_id(job_id, user_id=user["sub"]) or get_job_by_id(job_id, user_id="local")
+    if row is None or row["status"] == STATUS_DELETED:
+        raise HTTPException(status_code=404, detail="Job not found.")
+    data = _row_to_dict(row)
+    raw_path = data.get("output_path") or data.get("source_path")
+    path = _resolve_media_path(raw_path)
+    return FileResponse(path, filename=path.name, media_type="application/octet-stream")
+
+
+CAPTION_OVERRIDES_PATH = Path(os.environ.get("DB_PATH", "data/jobs.db")).parent / "caption_overrides.json"
+
+
+@app.get("/settings/captions")
+def get_caption_settings(user: dict = Depends(get_current_user)) -> dict:
+    defaults = {
+        "font_size": 18,
+        "color": "&H00FFFFFF",
+        "highlight_color": "&H0000FFFF",
+        "position": "bottom",
+        "style": "highlight",
+    }
+    if CAPTION_OVERRIDES_PATH.exists():
+        try:
+            import json as _json
+
+            overrides = _json.loads(CAPTION_OVERRIDES_PATH.read_text(encoding="utf-8"))
+            defaults.update(overrides)
+        except Exception:
+            pass
+    return defaults
+
+
+class CaptionSettingsIn(BaseModel):
+    font_size: Optional[int] = None
+    color: Optional[str] = None
+    highlight_color: Optional[str] = None
+    position: Optional[str] = None
+    style: Optional[str] = None
+
+
+@app.put("/settings/captions")
+def update_caption_settings(
+    body: CaptionSettingsIn,
+    user: dict = Depends(get_current_user),
+) -> dict:
+    import json as _json
+
+    CAPTION_OVERRIDES_PATH.parent.mkdir(parents=True, exist_ok=True)
+    existing = {}
+    if CAPTION_OVERRIDES_PATH.exists():
+        try:
+            existing = _json.loads(CAPTION_OVERRIDES_PATH.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    updates = body.model_dump(exclude_none=True)
+    existing.update(updates)
+    CAPTION_OVERRIDES_PATH.write_text(_json.dumps(existing, indent=2), encoding="utf-8")
+    return {"status": "ok"}
+
+
 class SPAStaticFiles(StaticFiles):
     async def get_response(self, path: str, scope):
         response = await super().get_response(path, scope)

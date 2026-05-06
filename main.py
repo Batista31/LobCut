@@ -19,6 +19,7 @@ from config.settings import (
     PIPELINE_IMAGE,
     PIPELINE_VIDEO,
     ROOT,
+    UNCLASSIFIED_RETRY_INTERVAL_SEC,
 )
 from orchestrator.database import (
     STATUS_FAILED,
@@ -26,15 +27,18 @@ from orchestrator.database import (
     get_first_linked_telegram_chat_id,
     get_telegram_chat_id,
     get_pending_jobs,
+    get_pending_retry_jobs,
     init_db,
     list_pending_telegram_jobs,
     mark_telegram_delivered,
     recover_interrupted_jobs,
+    reset_pending_retry_job,
     update_job_status,
 )
 from orchestrator.watcher import build_observer, scan_active_watches, sync_configured_watchers
 from pipelines.caption_pipeline.reel_watcher import build_reel_observer
 from pipelines.image_pipeline import process_job as process_image_job
+from pipelines.image_pipeline.pipeline import check_gemini_ready
 from pipelines.video_pipeline import run as run_video_job
 
 log = get_logger(__name__)
@@ -48,6 +52,33 @@ BANNER = r"""
 
   Autonomous Media Processing Agent
 """
+
+
+_last_retry_scan: float = 0.0
+
+
+def _retry_unclassified_image_jobs() -> None:
+    """Every UNCLASSIFIED_RETRY_INTERVAL_SEC seconds, re-queue any image jobs
+    that previously failed Gemini classification and are sitting in unclassified/.
+    They are flipped back to PENDING so the normal dispatch loop picks them up.
+    """
+    global _last_retry_scan
+    now = time.time()
+    if now - _last_retry_scan < UNCLASSIFIED_RETRY_INTERVAL_SEC:
+        return
+    _last_retry_scan = now
+
+    jobs = get_pending_retry_jobs(PIPELINE_IMAGE)
+    if not jobs:
+        return
+
+    log.info("[RETRY] Auto-retrying %d unclassified image job(s)...", len(jobs))
+    requeued = 0
+    for job in jobs:
+        if reset_pending_retry_job(int(job["id"])):
+            requeued += 1
+    if requeued:
+        log.info("[RETRY] Re-queued %d job(s) for Gemini classification.", requeued)
 
 
 def _dispatch_pending_image_jobs() -> None:
@@ -122,6 +153,15 @@ def main() -> None:
     init_db()
     recover_interrupted_jobs()
 
+    # --- Gemini startup diagnostic ---
+    gemini = check_gemini_ready()
+    if gemini["ready"]:
+        print(f"  ✅ Gemini API  : connected ({gemini['model']})")
+    else:
+        print(f"  ❌ Gemini API  : {gemini['error']}")
+        print("     Images will be held in unclassified/ until Gemini is available.")
+    print()
+
     observer = build_observer()
     observer.start()
 
@@ -147,6 +187,7 @@ def main() -> None:
             scan_active_watches()
             _dispatch_pending_image_jobs()
             _dispatch_pending_video_jobs()
+            _retry_unclassified_image_jobs()
             deliver_pending_notifications()
             time.sleep(JOB_DISPATCH_POLL_INTERVAL)
     except KeyboardInterrupt:

@@ -22,6 +22,7 @@ STATUS_UNKNOWN = "UNKNOWN"
 STATUS_DUPLICATE = "DUPLICATE"
 STATUS_NOT_IMPLEMENTED = "NOT_IMPLEMENTED"
 STATUS_DELETED = "DELETED"
+STATUS_PENDING_RETRY = "PENDING_RETRY"  # held in unclassified/, queued for auto-retry
 DEFAULT_USER_ID = "local"
 
 _SCHEMA = """
@@ -496,6 +497,48 @@ def recover_interrupted_jobs() -> int:
         )
     log.info("[RECOVERY] Re-queued %d interrupted PROCESSING job(s)", cur.rowcount)
     return cur.rowcount
+
+
+def get_pending_retry_jobs(pipeline: str, user_id: str = None) -> list:
+    """Return all PENDING_RETRY jobs for the given pipeline.
+
+    These are images that Gemini could not classify (quota / network failure)
+    and are sitting in output/images/unclassified/ waiting to be retried.
+    """
+    with _connect() as conn:
+        if user_id is None:
+            rows = conn.execute(
+                "SELECT * FROM jobs WHERE status = ? AND pipeline = ? ORDER BY updated_at",
+                (STATUS_PENDING_RETRY, pipeline),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM jobs WHERE user_id = ? AND status = ? AND pipeline = ? ORDER BY updated_at",
+                (user_id, STATUS_PENDING_RETRY, pipeline),
+            ).fetchall()
+    return rows
+
+
+def reset_pending_retry_job(job_id: int) -> bool:
+    """Flip a PENDING_RETRY job back to PENDING so the dispatch loop picks it up.
+
+    Also clears the error_message so the retry starts clean.
+    """
+    now = _now()
+    with _connect() as conn:
+        cur = conn.execute(
+            """
+            UPDATE jobs
+            SET status        = ?,
+                error_message = NULL,
+                updated_at    = ?
+            WHERE id = ?
+              AND status = ?
+            """,
+            (STATUS_PENDING, now, job_id, STATUS_PENDING_RETRY),
+        )
+    log.debug("Job #%d reset from PENDING_RETRY -> PENDING", job_id)
+    return cur.rowcount > 0
 
 
 def list_pending_telegram_jobs(limit: int = 20) -> list[sqlite3.Row]:

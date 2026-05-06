@@ -12,6 +12,7 @@ from config.settings import (
     OUTPUT_IMAGES,
     OUTPUT_OTHERS,
     OUTPUT_PEOPLE,
+    OUTPUT_UNCLASSIFIED,
     OUTPUT_VIDEOS,
     PIPELINE_VIDEO,
     QUARANTINE_DIR,
@@ -47,6 +48,16 @@ class PathResolver:
     def others(source: Path) -> Path:
         OUTPUT_OTHERS.mkdir(parents=True, exist_ok=True)
         return OUTPUT_OTHERS / source.name
+
+    @staticmethod
+    def unclassified(source: Path) -> Path:
+        """Holding folder for images that could not be classified by Gemini.
+
+        Jobs routed here get STATUS_PENDING_RETRY and are automatically
+        retried every UNCLASSIFIED_RETRY_INTERVAL_SEC seconds.
+        """
+        OUTPUT_UNCLASSIFIED.mkdir(parents=True, exist_ok=True)
+        return OUTPUT_UNCLASSIFIED / source.name
 
     @staticmethod
     def category(source: Path, category: str) -> Path:

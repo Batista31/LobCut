@@ -112,4 +112,11 @@ export const api = {
   openClawStatus: () => apiFetch<OpenClawStatus>('/openclaw/status'),
   health: () => apiFetch<{ status: string; db: string; version: string }>('/health'),
   logout: () => apiFetch<{ status: string }>('/auth/logout', { method: 'POST' }),
+  captionSettings: () => apiFetch<Record<string, unknown>>('/settings/captions'),
+  updateCaptionSettings: (body: Record<string, unknown>) =>
+    apiFetch<{ status: string }>('/settings/captions', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }),
 };

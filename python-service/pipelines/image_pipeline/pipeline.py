@@ -16,13 +16,16 @@ from config.logger import get_logger
 from config.path_resolver import PathResolver
 from config.settings import (
     BLUR_LAPLACIAN_THRESHOLD,
+    CATEGORY_ALIASES,
     DEFAULT_IMAGE_CATEGORY,
+    ENABLE_CATEGORY_ALIASES,
     GEMINI_API_KEY_ENV_VAR,
     GEMINI_BASE_CATEGORIES,
     GEMINI_IMAGE_MODEL,
     GEMINI_FALLBACK_MODELS,
     GEMINI_MAX_RETRIES_PER_MODEL,
     GEMINI_RETRY_DELAY_SECONDS,
+    STATUS_PENDING_RETRY,
     TEMP_DIR,
 )
 from orchestrator.database import (
@@ -75,35 +78,6 @@ def _raise_if_gemini_quota_blocked() -> None:
             f"Gemini quota is exhausted. AI classification is paused for about {remaining_minutes} more minute(s); "
             "retry later or switch to a paid/higher-quota key."
         )
-
-
-def _fallback_classification(source: Path, error: Exception) -> dict:
-    name = source.stem.lower()
-    category = DEFAULT_IMAGE_CATEGORY
-    tags = ["classification_fallback"]
-    summary = "Gemini classification was unavailable, so a fallback category was used."
-
-    if "screenshot" in name:
-        category = "screenshot"
-        tags.append("screen_capture")
-        summary = "Gemini classification was unavailable; filename suggests this is a screenshot."
-    elif any(token in name for token in ("portrait", "selfie", "person", "people")):
-        category = "people"
-        tags.append("filename_hint_people")
-        summary = "Gemini classification was unavailable; filename suggests people are the main subject."
-
-    log.warning(
-        "[IMAGE] Falling back to heuristic classification for %s after Gemini failure: %s",
-        source.name,
-        error,
-    )
-    return {
-        "primary_category": category,
-        "secondary_tags": tags,
-        "contains_people": category in {"people", "portrait"},
-        "summary": summary,
-        "confidence": 0.0,
-    }
 
 
 def _copy_to_temp(source: Path) -> Path:
@@ -181,6 +155,29 @@ def _get_gemini_client():
 
     _gemini_client = genai.Client(api_key=api_key)
     return _gemini_client
+
+
+def check_gemini_ready() -> dict:
+    """Verify Gemini API connectivity at startup.
+
+    Returns a dict with keys:
+        ready (bool)    — True if the client initialised without error
+        model (str)     — the configured primary model name
+        error (str|None)— human-readable error if not ready
+    """
+    try:
+        _load_dotenv_if_present()
+        api_key = os.getenv(GEMINI_API_KEY_ENV_VAR)
+        if not api_key:
+            return {
+                "ready": False,
+                "model": GEMINI_IMAGE_MODEL,
+                "error": f"{GEMINI_API_KEY_ENV_VAR} is not set in your environment or .env file.",
+            }
+        _get_gemini_client()  # initialises and caches the client
+        return {"ready": True, "model": GEMINI_IMAGE_MODEL, "error": None}
+    except Exception as exc:
+        return {"ready": False, "model": GEMINI_IMAGE_MODEL, "error": str(exc)}
 
 
 def _laplacian_variance(image_path: Path) -> float:
@@ -279,8 +276,9 @@ def _classify_with_gemini(image_path: Path) -> dict:
             continue
     if uploaded_file is None:
         raise RuntimeError(
-            f"Gemini upload failed for {image_path.name} with mime_type={mime_type}: "
-            + " | ".join(upload_errors)
+            f"\u274c Could not upload {image_path.name} to Gemini "
+            f"(format: {mime_type}). Check your internet connection or file format. "
+            "Details: " + " | ".join(upload_errors)
         )
     try:
         response = None
@@ -319,8 +317,11 @@ def _classify_with_gemini(image_path: Path) -> dict:
                     message = str(exc)
                     if status_code == 429 or "RESOURCE_EXHAUSTED" in message or "quota" in message.lower():
                         _mark_gemini_quota_blocked(exc)
+                        remaining_min = max(1, int((_gemini_quota_blocked_until - time.time()) / 60))
                         raise RuntimeError(
-                            "Gemini quota/rate limit hit. AI classification has been paused to avoid wasting credits. "
+                            f"\u26a0\ufe0f Gemini daily quota reached. "
+                            f"Auto-retry will resume when quota resets "
+                            f"(~{remaining_min} min remaining). "
                             f"Original error: {exc}"
                         ) from exc
 
@@ -344,7 +345,11 @@ def _classify_with_gemini(image_path: Path) -> dict:
                 break
 
         if response is None:
-            raise RuntimeError(f"Gemini classification failed after retries: {last_error}")
+            raise RuntimeError(
+                f"\u274c Gemini did not respond after {GEMINI_MAX_RETRIES_PER_MODEL} attempt(s) "
+                f"for {image_path.name}. Image held in unclassified/ for auto-retry. "
+                f"Last error: {last_error}"
+            )
     finally:
         try:
             client.files.delete(name=uploaded_file.name)
@@ -369,6 +374,13 @@ def _classify_with_gemini(image_path: Path) -> dict:
         "summary": str(parsed.get("summary", "")).strip() or f"Classified as {category}.",
         "confidence": float(parsed.get("confidence", 0.0)),
     }
+
+
+def _apply_category_aliases(category: str) -> str:
+    """Collapse similar categories into a parent folder when ENABLE_CATEGORY_ALIASES is True."""
+    if ENABLE_CATEGORY_ALIASES:
+        return CATEGORY_ALIASES.get(category, category)
+    return category
 
 
 def _resolve_destination(source: Path, blurry: bool, category: str) -> Path:
@@ -401,9 +413,40 @@ def process_job(job) -> None:
             try:
                 ai_result = _classify_with_gemini(temp_copy)
             except Exception as exc:
-                ai_result = _fallback_classification(source, exc)
+                # Gemini unavailable — route to unclassified/ and queue for auto-retry.
+                # We deliberately do NOT guess by filename; the image will be properly
+                # classified once Gemini recovers and the retry loop fires.
+                log.warning(
+                    "[IMAGE] Gemini unavailable for %s — routing to unclassified/ for auto-retry. Error: %s",
+                    source.name,
+                    exc,
+                )
+                unclassified_dest = PathResolver.unclassified(source)
+                if temp_copy and temp_copy.exists():
+                    shutil.move(str(temp_copy), str(unclassified_dest))
+                    temp_copy = None  # prevent finally block from deleting it
+                update_job_analysis(
+                    job_id,
+                    ai_category="unclassified",
+                    ai_tags='["pending_retry"]',
+                    ai_summary="Gemini unavailable — image held for auto-retry.",
+                    blur_score=blur_score,
+                    classifier="pending_retry",
+                )
+                update_job_status(
+                    job_id,
+                    STATUS_PENDING_RETRY,
+                    error_message=str(exc),
+                    output_path=unclassified_dest,
+                )
+                log.info(
+                    "[IMAGE] PENDING_RETRY | Job #%d | %s → unclassified/",
+                    job_id,
+                    source.name,
+                )
+                return
 
-        category = ai_result["primary_category"]
+        category = _apply_category_aliases(ai_result["primary_category"])
         destination = _resolve_destination(source, blurry, category)
 
         shutil.move(str(temp_copy), str(destination))
