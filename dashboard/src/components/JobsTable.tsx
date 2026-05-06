@@ -4,6 +4,12 @@ import { StatusBadge } from './StatusBadge';
 
 const API_BASE = 'http://localhost:8000';
 
+type LobCutWindow = Window & {
+  lobcut?: {
+    openOutputFolder?: (filePath: string) => void;
+  };
+};
+
 type Props = {
   jobs: Job[];
   loading: boolean;
@@ -17,16 +23,23 @@ type Props = {
 
 export function JobsTable({ jobs, loading, polling, refresh, onDeleteLocal, onToast, onSelect, selectedId }: Props) {
   const [openedJobId, setOpenedJobId] = useState<number | null>(null);
+  const [outputMessage, setOutputMessage] = useState('');
   const [spinning, setSpinning] = useState(false);
 
-  const openOutput = (job: Job) => {
+  const openOutput = async (job: Job) => {
     if (!job.output_path) return;
-    // Open the file via the API — images show inline, videos download
-    const isImg = (job.detected_type || '').toUpperCase() === 'IMAGE';
-    const url = isImg
-      ? `${API_BASE}/jobs/${job.id}/image`
-      : `${API_BASE}/jobs/${job.id}/download`;
-    window.open(url, '_blank');
+    const lobcut = (window as LobCutWindow).lobcut;
+    if (lobcut?.openOutputFolder) {
+      lobcut.openOutputFolder(job.output_path);
+      setOutputMessage('Opened!');
+    } else {
+      try {
+        await navigator.clipboard.writeText(job.output_path);
+      } catch {
+        onToast(job.output_path);
+      }
+      setOutputMessage('Path copied!');
+    }
     setOpenedJobId(job.id);
     window.setTimeout(() => setOpenedJobId(null), 2000);
   };
@@ -141,11 +154,11 @@ export function JobsTable({ jobs, loading, polling, refresh, onDeleteLocal, onTo
                 </td>
                 <td title={title(job.output_path || '-')}>
                   {doneWithOutput(job) ? (
-                    <button type="button" className="outputButton" onClick={(event) => { event.stopPropagation(); openOutput(job); }}>
+                    <button type="button" className="outputButton" onClick={(event) => { event.stopPropagation(); void openOutput(job); }}>
                       {isImage(job) ? <img className="outputThumb" src={previewSrc(job)} alt="" loading="lazy" /> : null}
                       {isVideo(job) ? <span className="filmIcon" aria-hidden="true" /> : null}
                       <span className="outputLabel">Open Output</span>
-                      {openedJobId === job.id ? <span className="copiedTooltip">Opened!</span> : null}
+                      {openedJobId === job.id ? <span className="copiedTooltip">{outputMessage}</span> : null}
                     </button>
                   ) : (
                     <span className="emptyPreview">-</span>

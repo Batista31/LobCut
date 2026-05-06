@@ -141,6 +141,26 @@ async function stopServices() {
 
 ipcMain.handle('app:get-version', () => app.getVersion());
 
+ipcMain.on('open-output-folder', (_event, filePath) => {
+  if (!filePath) return;
+
+  const fs = require('fs');
+  const normalized = String(filePath).replace(/\\/g, '/');
+  const candidates = [
+    filePath,
+    normalized.replace(/^\/app\/python-service\/output\//, path.join(projectRoot, 'output').replace(/\\/g, '/') + '/'),
+    normalized.replace(/^\/app\/output\//, path.join(projectRoot, 'output').replace(/\\/g, '/') + '/'),
+    normalized.replace(/^\/app\/input\//, path.join(projectRoot, 'input').replace(/\\/g, '/') + '/'),
+  ];
+
+  const target = candidates.find((candidate) => fs.existsSync(candidate));
+  if (target) {
+    shell.showItemInFolder(target);
+  } else {
+    shell.openPath(path.join(projectRoot, 'output'));
+  }
+});
+
 app.whenReady().then(() => {
   createSplashWindow();
   createMainWindow();
