@@ -525,7 +525,7 @@ tr.selected { background: var(--accent-subtle); }
 
 /* ── Caption Settings ── */
 .captionSection { margin-top: 20px; }
-.captionGrid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; padding: 20px; max-width: 640px; }
+.captionGrid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; padding: 20px; max-width: 760px; }
 .captionGrid label { display: grid; gap: 6px; color: var(--text-secondary); font-size: 13px; font-weight: 500; }
 .captionGrid input[type="range"] {
   -webkit-appearance: none; appearance: none;
@@ -545,14 +545,47 @@ tr.selected { background: var(--accent-subtle); }
   border: 1px solid var(--border); border-radius: var(--radius-sm);
   background: var(--bg); cursor: pointer; padding: 2px;
 }
+.captionToggle {
+  display: flex !important;
+  align-items: center;
+  grid-template-columns: none !important;
+}
+.captionToggle input { width: 16px; height: 16px; margin: 0; }
 .captionPreview {
-  display: flex; align-items: center; gap: 12px;
+  display: flex; align-items: center; justify-content: center; gap: 12px;
   padding: 14px 20px;
   border: 1px solid var(--border); border-radius: var(--radius);
-  background: var(--bg); margin: 0 20px;
+  background:
+    linear-gradient(rgba(0, 0, 0, 0.18), rgba(0, 0, 0, 0.18)),
+    linear-gradient(135deg, #2b3445 0%, #111827 48%, #3a2331 100%);
+  margin: 0 20px;
+  min-height: 180px;
+  position: relative;
+  overflow: hidden;
 }
+.captionPreview::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(90deg, rgba(255,255,255,0.06) 1px, transparent 1px),
+    linear-gradient(rgba(255,255,255,0.05) 1px, transparent 1px);
+  background-size: 36px 36px;
+  opacity: 0.45;
+}
+.captionPreview-top { align-items: flex-start; }
+.captionPreview-middle { align-items: center; }
+.captionPreview-bottom { align-items: flex-end; }
 .captionPreviewSwatch { width: 32px; height: 32px; border-radius: var(--radius-sm); border: 1px solid var(--border); }
-.captionPreviewText { font-size: 13px; color: var(--text-secondary); }
+.captionPreviewText {
+  position: relative;
+  z-index: 1;
+  text-align: center;
+  line-height: 1.05;
+  letter-spacing: 0;
+  padding: 14px;
+  paint-order: stroke fill;
+}
 
 /* ── OpenClaw ── */
 .openclawGrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; padding: 20px; }

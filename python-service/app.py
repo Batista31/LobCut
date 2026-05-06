@@ -3,13 +3,14 @@ from __future__ import annotations
 import os
 import re
 import secrets
+import socket
 import sqlite3
 import sys
 import mimetypes
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse
 
 import httpx
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
@@ -429,8 +430,19 @@ async def openclaw_status(user: dict = Depends(get_current_user)) -> dict:
             response = await client.get(gateway_url)
         gateway["status"] = "reachable" if response.status_code < 500 else f"http_{response.status_code}"
     except Exception as exc:
-        gateway["status"] = "unreachable"
-        gateway["error"] = str(exc)
+        parsed = urlparse(gateway_url)
+        host = parsed.hostname
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+        try:
+            if not host:
+                raise OSError("OpenClaw gateway URL has no host.")
+            with socket.create_connection((host, port), timeout=3):
+                pass
+            gateway["status"] = "reachable"
+            gateway["note"] = "Gateway accepted a TCP connection but did not return a plain HTTP response."
+        except OSError:
+            gateway["status"] = "unreachable"
+            gateway["error"] = str(exc)
 
     config = {}
     if config_path.exists():
@@ -562,11 +574,17 @@ CAPTION_OVERRIDES_PATH = Path(os.environ.get("DB_PATH", "data/jobs.db")).parent 
 @app.get("/settings/captions")
 def get_caption_settings(user: dict = Depends(get_current_user)) -> dict:
     defaults = {
+        "font": "Arial",
         "font_size": 18,
         "color": "&H00FFFFFF",
         "highlight_color": "&H0000FFFF",
+        "outline_color": "&H00000000",
+        "outline_width": 3,
+        "shadow": 1,
+        "bold": True,
         "position": "bottom",
         "style": "highlight",
+        "max_words_per_line": 4,
     }
     if CAPTION_OVERRIDES_PATH.exists():
         try:
@@ -580,11 +598,44 @@ def get_caption_settings(user: dict = Depends(get_current_user)) -> dict:
 
 
 class CaptionSettingsIn(BaseModel):
+    font: Optional[str] = None
     font_size: Optional[int] = None
     color: Optional[str] = None
     highlight_color: Optional[str] = None
+    outline_color: Optional[str] = None
+    outline_width: Optional[float] = None
+    shadow: Optional[float] = None
+    bold: Optional[bool] = None
     position: Optional[str] = None
     style: Optional[str] = None
+    max_words_per_line: Optional[int] = None
+
+
+def _clean_caption_updates(updates: dict) -> dict:
+    cleaned = dict(updates)
+    if "font" in cleaned:
+        allowed_fonts = {"Arial", "Arial Black", "Impact", "Verdana", "Tahoma", "Trebuchet MS", "Georgia"}
+        if cleaned["font"] not in allowed_fonts:
+            cleaned["font"] = "Arial"
+    if "font_size" in cleaned:
+        cleaned["font_size"] = min(72, max(12, int(cleaned["font_size"])))
+    if "outline_width" in cleaned:
+        cleaned["outline_width"] = min(8, max(0, float(cleaned["outline_width"])))
+    if "shadow" in cleaned:
+        cleaned["shadow"] = min(5, max(0, float(cleaned["shadow"])))
+    if "max_words_per_line" in cleaned:
+        cleaned["max_words_per_line"] = min(8, max(1, int(cleaned["max_words_per_line"])))
+    if "position" in cleaned and cleaned["position"] not in {"top", "middle", "center", "bottom"}:
+        cleaned["position"] = "bottom"
+    if "position" in cleaned and cleaned["position"] == "center":
+        cleaned["position"] = "middle"
+    if "style" in cleaned and cleaned["style"] not in {"highlight", "word_by_word", "block"}:
+        cleaned["style"] = "highlight"
+    for key in ("color", "highlight_color", "outline_color"):
+        value = cleaned.get(key)
+        if isinstance(value, str) and not re.fullmatch(r"&H[0-9A-Fa-f]{8}", value):
+            cleaned.pop(key, None)
+    return cleaned
 
 
 @app.put("/settings/captions")
@@ -601,7 +652,7 @@ def update_caption_settings(
             existing = _json.loads(CAPTION_OVERRIDES_PATH.read_text(encoding="utf-8"))
         except Exception:
             pass
-    updates = body.model_dump(exclude_none=True)
+    updates = _clean_caption_updates(body.model_dump(exclude_none=True))
     existing.update(updates)
     CAPTION_OVERRIDES_PATH.write_text(_json.dumps(existing, indent=2), encoding="utf-8")
     return {"status": "ok"}

@@ -44,7 +44,7 @@ services:
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
       - CORS_ALLOW_ORIGINS=http://localhost:3000
       - DASHBOARD_URL=http://localhost:3000
-      - OPENCLAW_GATEWAY_URL=http://openclaw:18789
+      - OPENCLAW_GATEWAY_URL=http://host.docker.internal:18789
       - OPENCLAW_PUBLIC_URL=http://localhost:18789
     restart: unless-stopped
     command: uvicorn app:app --app-dir python-service --host 0.0.0.0 --port 8000
@@ -62,7 +62,7 @@ services:
       - ./input:/watch/input:ro
       - openclaw-data:/root/.openclaw
     environment:
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_KEY}
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
       - TELEGRAM_ALLOWED_USER_ID=${TELEGRAM_ALLOWED_USER_ID}
       - MEDIA_SERVICE_URL=http://api:8000
@@ -91,6 +91,20 @@ services:
     command: sh -c "npm install && npm run dev -- --host"
     profiles:
       - dev
+
+  telegram-bot:
+    build: ./telegram-bot
+    restart: unless-stopped
+    environment:
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
+      - API_BASE_URL=http://api:8000
+      - DB_PATH=/app/data/jobs.db
+    volumes:
+      - ./openclaw-skill/memory:/app/memory
+      - ./data:/app/data:ro
+    depends_on:
+      - api
 
 volumes:
   openclaw-data:

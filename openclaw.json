@@ -1,7 +1,18 @@
 {
-  "name": "LobCut",
-  "version": "1.0.0",
-  "service": "lobcut",
-  "dashboard": "http://localhost:3000",
-  "api": "http://localhost:8000"
+  "agents": {
+    "defaults": {
+      "model": "openai/gpt-4o",
+      "workspace": "/app/workspace"
+    }
+  },
+  "gateway": {
+    "port": 18789,
+    "mode": "local"
+  },
+  "channels": {
+    "telegram": {
+      "enabled": true,
+      "token_env": "TELEGRAM_BOT_TOKEN"
+    }
+  }
 }

@@ -8,19 +8,31 @@ type Props = {
 };
 
 type CaptionConfig = {
+  font: string;
   font_size: number;
   color: string;
   highlight_color: string;
+  outline_color: string;
+  outline_width: number;
+  shadow: number;
+  bold: boolean;
   position: string;
   style: string;
+  max_words_per_line: number;
 };
 
 const DEFAULT_CAPTIONS: CaptionConfig = {
+  font: 'Arial',
   font_size: 18,
   color: '#ffffff',
   highlight_color: '#ffff00',
+  outline_color: '#000000',
+  outline_width: 3,
+  shadow: 1,
+  bold: true,
   position: 'bottom',
   style: 'highlight',
+  max_words_per_line: 4,
 };
 
 function assColorToHex(assColor: string): string {
@@ -35,6 +47,18 @@ function hexToAssColor(hex: string): string {
   const h = hex.replace('#', '');
   if (h.length !== 6) return `&H00${h.toUpperCase()}`;
   return `&H00${h.slice(4, 6)}${h.slice(2, 4)}${h.slice(0, 2)}`.toUpperCase();
+}
+
+function stringSetting(value: unknown, fallback: string): string {
+  return typeof value === 'string' ? value : fallback;
+}
+
+function numberSetting(value: unknown, fallback: number): number {
+  return typeof value === 'number' ? value : fallback;
+}
+
+function boolSetting(value: unknown, fallback: boolean): boolean {
+  return typeof value === 'boolean' ? value : fallback;
 }
 
 export function Settings({ user }: Props) {
@@ -57,11 +81,17 @@ export function Settings({ user }: Props) {
     try {
       const data = await api.captionSettings();
       setCaptions({
-        font_size: data.font_size ?? DEFAULT_CAPTIONS.font_size,
-        color: assColorToHex(data.color ?? '&H00FFFFFF'),
-        highlight_color: assColorToHex(data.highlight_color ?? '&H0000FFFF'),
-        position: data.position ?? DEFAULT_CAPTIONS.position,
-        style: data.style ?? DEFAULT_CAPTIONS.style,
+        font: stringSetting(data.font, DEFAULT_CAPTIONS.font),
+        font_size: numberSetting(data.font_size, DEFAULT_CAPTIONS.font_size),
+        color: assColorToHex(stringSetting(data.color, '&H00FFFFFF')),
+        highlight_color: assColorToHex(stringSetting(data.highlight_color, '&H0000FFFF')),
+        outline_color: assColorToHex(stringSetting(data.outline_color, '&H00000000')),
+        outline_width: numberSetting(data.outline_width, DEFAULT_CAPTIONS.outline_width),
+        shadow: numberSetting(data.shadow, DEFAULT_CAPTIONS.shadow),
+        bold: boolSetting(data.bold, DEFAULT_CAPTIONS.bold),
+        position: stringSetting(data.position, DEFAULT_CAPTIONS.position),
+        style: stringSetting(data.style, DEFAULT_CAPTIONS.style),
+        max_words_per_line: numberSetting(data.max_words_per_line, DEFAULT_CAPTIONS.max_words_per_line),
       });
     } catch {
       // Use defaults
@@ -94,11 +124,17 @@ export function Settings({ user }: Props) {
     setCaptionMsg('');
     try {
       await api.updateCaptionSettings({
+        font: captions.font,
         font_size: captions.font_size,
         color: hexToAssColor(captions.color),
         highlight_color: hexToAssColor(captions.highlight_color),
+        outline_color: hexToAssColor(captions.outline_color),
+        outline_width: captions.outline_width,
+        shadow: captions.shadow,
+        bold: captions.bold,
         position: captions.position,
         style: captions.style,
+        max_words_per_line: captions.max_words_per_line,
       });
       setCaptionMsg('Caption settings saved.');
       window.setTimeout(() => setCaptionMsg(''), 3000);
@@ -148,11 +184,26 @@ export function Settings({ user }: Props) {
           <form onSubmit={saveCaptions}>
             <div className="captionGrid">
               <label>
+                Font
+                <select
+                  value={captions.font}
+                  onChange={(e) => setCaptions({ ...captions, font: e.target.value })}
+                >
+                  <option value="Arial">Arial</option>
+                  <option value="Arial Black">Arial Black</option>
+                  <option value="Impact">Impact</option>
+                  <option value="Verdana">Verdana</option>
+                  <option value="Tahoma">Tahoma</option>
+                  <option value="Trebuchet MS">Trebuchet MS</option>
+                  <option value="Georgia">Georgia</option>
+                </select>
+              </label>
+              <label>
                 Font Size: {captions.font_size}px
                 <input
                   type="range"
                   min={12}
-                  max={48}
+                  max={72}
                   value={captions.font_size}
                   onChange={(e) => setCaptions({ ...captions, font_size: Number(e.target.value) })}
                 />
@@ -164,7 +215,7 @@ export function Settings({ user }: Props) {
                   onChange={(e) => setCaptions({ ...captions, position: e.target.value })}
                 >
                   <option value="bottom">Bottom</option>
-                  <option value="center">Center</option>
+                  <option value="middle">Middle</option>
                   <option value="top">Top</option>
                 </select>
               </label>
@@ -185,6 +236,54 @@ export function Settings({ user }: Props) {
                 />
               </label>
               <label>
+                Boundary Color
+                <input
+                  type="color"
+                  value={captions.outline_color}
+                  onChange={(e) => setCaptions({ ...captions, outline_color: e.target.value })}
+                />
+              </label>
+              <label>
+                Boundary: {captions.outline_width}px
+                <input
+                  type="range"
+                  min={0}
+                  max={8}
+                  step={0.5}
+                  value={captions.outline_width}
+                  onChange={(e) => setCaptions({ ...captions, outline_width: Number(e.target.value) })}
+                />
+              </label>
+              <label>
+                Shadow: {captions.shadow}px
+                <input
+                  type="range"
+                  min={0}
+                  max={5}
+                  step={0.5}
+                  value={captions.shadow}
+                  onChange={(e) => setCaptions({ ...captions, shadow: Number(e.target.value) })}
+                />
+              </label>
+              <label>
+                Words per line: {captions.max_words_per_line}
+                <input
+                  type="range"
+                  min={1}
+                  max={8}
+                  value={captions.max_words_per_line}
+                  onChange={(e) => setCaptions({ ...captions, max_words_per_line: Number(e.target.value) })}
+                />
+              </label>
+              <label className="captionToggle">
+                <input
+                  type="checkbox"
+                  checked={captions.bold}
+                  onChange={(e) => setCaptions({ ...captions, bold: e.target.checked })}
+                />
+                Bold letters
+              </label>
+              <label>
                 Style
                 <select
                   value={captions.style}
@@ -196,13 +295,20 @@ export function Settings({ user }: Props) {
                 </select>
               </label>
             </div>
-            <div className="captionPreview">
-              <div className="captionPreviewSwatch" style={{ backgroundColor: captions.color }} />
-              <div className="captionPreviewSwatch" style={{ backgroundColor: captions.highlight_color }} />
-              <span className="captionPreviewText">
-                Preview: <span style={{ color: captions.color }}>{captions.font_size}px</span>{' '}
-                / <span style={{ color: captions.highlight_color }}>highlighted</span>
-              </span>
+            <div className={`captionPreview captionPreview-${captions.position}`}>
+              <div
+                className="captionPreviewText"
+                style={{
+                  color: captions.color,
+                  fontFamily: captions.font,
+                  fontSize: `${Math.max(18, captions.font_size)}px`,
+                  fontWeight: captions.bold ? 800 : 600,
+                  WebkitTextStroke: `${captions.outline_width}px ${captions.outline_color}`,
+                  textShadow: captions.shadow ? `0 ${captions.shadow}px ${captions.shadow * 2}px rgba(0,0,0,0.85)` : 'none',
+                }}
+              >
+                MAKE IT <span style={{ color: captions.highlight_color }}>POP</span>
+              </div>
             </div>
             <div className="settingsActions" style={{ padding: '16px' }}>
               <button type="submit">Save Caption Settings</button>

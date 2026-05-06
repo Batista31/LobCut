@@ -2,6 +2,7 @@ param(
     [switch]$NoElectron,
     [switch]$NoDashboard,
     [switch]$WithOpenClaw,
+    [switch]$NoOpenClaw,
     [switch]$NoBuild,
     [switch]$Rebuild,
     [switch]$Logs,
@@ -206,7 +207,7 @@ $composeArgs = @("compose")
 if (-not $NoDashboard) {
     $composeArgs += @("--profile", "dev")
 }
-if ($WithOpenClaw) {
+if (-not $NoOpenClaw -or $WithOpenClaw) {
     $composeArgs += @("--profile", "openclaw")
 }
 $composeArgs += @("up", "-d")
@@ -241,6 +242,16 @@ if (-not $NoDashboard) {
     }
 }
 
+if (-not $NoOpenClaw -or $WithOpenClaw) {
+    Write-Step "Waiting for the OpenClaw gateway"
+    if (Wait-ForHttp -Url "http://localhost:18789" -TimeoutSeconds 120) {
+        Write-Ok "OpenClaw gateway is ready at http://localhost:18789"
+    }
+    else {
+        Write-Warn "OpenClaw gateway did not answer before the timeout. Check logs with: docker compose logs openclaw"
+    }
+}
+
 if (-not $NoElectron) {
     Write-Step "Starting the desktop app"
     Get-Process -Name "electron" -ErrorAction SilentlyContinue |
@@ -272,6 +283,9 @@ if (-not $NoDashboard) {
     Write-Host "Dashboard: http://localhost:3000"
 }
 Write-Host "API:       http://localhost:8000"
+if (-not $NoOpenClaw -or $WithOpenClaw) {
+    Write-Host "OpenClaw:  http://localhost:18789"
+}
 Write-Host "Drop images into: $ProjectRoot\input\images"
 Write-Host ""
 Write-Host "Useful commands:"
@@ -281,5 +295,12 @@ Write-Host "  docker compose logs -f"
 if ($Logs) {
     Write-Host ""
     Write-Host "Following LobCut service logs. Press Ctrl+C to stop viewing logs." -ForegroundColor Cyan
-    docker compose logs -f orchestrator api dashboard
+    $logServices = @("orchestrator", "api")
+    if (-not $NoDashboard) {
+        $logServices += "dashboard"
+    }
+    if (-not $NoOpenClaw -or $WithOpenClaw) {
+        $logServices += "openclaw"
+    }
+    docker compose logs -f @logServices
 }

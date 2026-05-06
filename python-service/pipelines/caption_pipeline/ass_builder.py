@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from config.settings import (
@@ -12,6 +13,7 @@ from config.settings import (
     CAPTION_POSITION,
     CAPTION_SHADOW,
     CAPTION_STYLE,
+    DB_PATH,
 )
 
 
@@ -28,26 +30,47 @@ def group_words_into_lines(words: list[dict], max_words_per_line: int) -> list[l
     return [words[i : i + max(1, max_words_per_line)] for i in range(0, len(words), max(1, max_words_per_line))]
 
 
-def _alignment_and_margin(video_height: int):
+CAPTION_OVERRIDES_PATH = Path(DB_PATH).parent / "caption_overrides.json"
+
+
+def _load_style_config(style_config: dict | None = None) -> dict:
+    merged = {}
+    if CAPTION_OVERRIDES_PATH.exists():
+        try:
+            data = json.loads(CAPTION_OVERRIDES_PATH.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                merged.update(data)
+        except Exception:
+            pass
+    if style_config:
+        merged.update(style_config)
+    return merged
+
+
+def _alignment_and_margin(video_height: int, position: str):
     margin_v = int(video_height * 0.08)
-    if CAPTION_POSITION == "top":
+    if position == "top":
         return 8, margin_v
-    if CAPTION_POSITION == "center":
+    if position in {"middle", "center"}:
         return 5, 0
     return 2, margin_v
 
 
 def build_ass(words: list[dict], video_width: int, video_height: int, style_config: dict | None = None) -> str:
-    style_config = style_config or {}
+    style_config = _load_style_config(style_config)
     font = style_config.get("font", CAPTION_FONT)
     base_size = int(style_config.get("font_size", CAPTION_FONT_SIZE))
     color = style_config.get("color", CAPTION_COLOR)
     highlight = style_config.get("highlight_color", CAPTION_HIGHLIGHT_COLOR)
+    outline_color = style_config.get("outline_color", "&H00000000")
+    position = style_config.get("position", CAPTION_POSITION)
     style_mode = style_config.get("style", CAPTION_STYLE)
     max_words = int(style_config.get("max_words_per_line", CAPTION_MAX_WORDS_PER_LINE))
-    outline = 2 if style_config.get("outline", CAPTION_OUTLINE) else 0
-    shadow = 1 if style_config.get("shadow", CAPTION_SHADOW) else 0
-    align, margin_v = _alignment_and_margin(video_height)
+    outline_enabled = bool(style_config.get("outline", CAPTION_OUTLINE))
+    outline = float(style_config.get("outline_width", 3 if outline_enabled else 0)) if outline_enabled else 0
+    shadow = float(style_config.get("shadow", 1 if CAPTION_SHADOW else 0))
+    bold = -1 if bool(style_config.get("bold", True)) else 0
+    align, margin_v = _alignment_and_margin(video_height, str(position))
     font_size = max(12, int(base_size * (video_height / 1080.0)))
 
     header = [
@@ -58,7 +81,7 @@ def build_ass(words: list[dict], video_width: int, video_height: int, style_conf
         "",
         "[V4+ Styles]",
         "Format: Name, Fontname, Fontsize, PrimaryColour, OutlineColour, BackColour, Bold, Italic, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV",
-        f"Style: Default,{font},{font_size},{color},&H00000000,&H00000000,0,0,1,{outline},{shadow},{align},10,10,{margin_v}",
+        f"Style: Default,{font},{font_size},{color},{outline_color},&H00000000,{bold},0,1,{outline},{shadow},{align},10,10,{margin_v}",
         "",
         "[Events]",
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
