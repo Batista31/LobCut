@@ -78,6 +78,10 @@ export function JobsTable({ jobs, loading, polling, refresh, onDeleteLocal, onTo
   const isVideo = (job: Job) => (job.detected_type || '').toUpperCase() === 'VIDEO';
   const doneWithOutput = (job: Job) => job.status === 'DONE' && Boolean(job.output_path);
   const title = (value: unknown) => String(value ?? '-');
+  const rowClass = (job: Job) => [
+    selectedId === job.id ? 'selected' : '',
+    `jobRowStatus-${job.status.toLowerCase()}`,
+  ].filter(Boolean).join(' ');
 
   return (
     <section className="tableSection">
@@ -130,12 +134,14 @@ export function JobsTable({ jobs, loading, polling, refresh, onDeleteLocal, onTo
             <tr><td colSpan={10}>No jobs yet.</td></tr>
           ) : (
             jobs.map((job) => (
-              <tr
-                key={job.id}
-                className={selectedId === job.id ? 'selected' : ''}
-                onClick={() => onSelect(job)}
-              >
-                <td title={title(job.id)}><code>#{job.id}</code></td>
+                <tr
+                  key={job.id}
+                  className={rowClass(job)}
+                  onClick={() => onSelect(job)}
+                >
+                <td title={title(job.id)}>
+                  <code>#{job.id}</code>
+                </td>
                 <td title={job.filename}>{job.filename}</td>
                 <td title={job.user_id}>{job.user_id}</td>
                 <td title={title(job.detected_type || 'UNKNOWN')}><span className="typeBadge">{job.detected_type || 'UNKNOWN'}</span></td>

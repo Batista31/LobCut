@@ -8,6 +8,7 @@
     "build": "electron-builder"
   },
   "dependencies": {
+    "chokidar": "^3.6.0",
     "electron": "^28.3.3",
     "electron-builder": "^24.13.3"
   },

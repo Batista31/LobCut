@@ -8,7 +8,7 @@ import json
 import os
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(os.environ.get("LOBCUT_ROOT", Path(__file__).resolve().parents[2])).resolve()
 
 
 def _path_from_env(name: str, default: Path) -> Path:

@@ -9,3 +9,9 @@ contextBridge.exposeInMainWorld('lobcut', {
     return () => ipcRenderer.removeListener('docker:status', listener);
   },
 });
+
+contextBridge.exposeInMainWorld('watcherAPI', {
+  add: (path) => ipcRenderer.invoke('watcher:add', path),
+  remove: (id, path) => ipcRenderer.invoke('watcher:remove', id, path),
+  toggle: (id, path, enabled) => ipcRenderer.invoke('watcher:toggle', id, path, enabled),
+});

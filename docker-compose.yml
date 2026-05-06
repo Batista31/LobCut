@@ -18,6 +18,8 @@ services:
       # Example: WATCH_PATH_MAPPINGS=D:\Z-work\Input=/watch/z-work-input
       - WATCH_PATH_MAPPINGS=${WATCH_PATH_MAPPINGS}
       - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - GEMINI_API_KEY_2=${GEMINI_API_KEY_2}
+      - GEMINI_API_KEY_3=${GEMINI_API_KEY_3}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
     restart: unless-stopped

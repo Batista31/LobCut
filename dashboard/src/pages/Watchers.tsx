@@ -1,7 +1,14 @@
 import { FormEvent, useEffect, useState } from 'react';
 import { api, type User, type Watcher } from '../api';
 import { Topbar } from '../components/Topbar';
-import { routeHref } from '../navigation';
+
+type LobCutWindow = Window & {
+  watcherAPI?: {
+    add: (path: string) => Promise<Watcher>;
+    remove: (id: number, path: string) => Promise<{ status: string }>;
+    toggle: (id: number, path: string, enabled: boolean) => Promise<Watcher>;
+  };
+};
 
 type Props = {
   user: User;
@@ -11,6 +18,7 @@ export function Watchers({ user }: Props) {
   const [watchers, setWatchers] = useState<Watcher[]>([]);
   const [path, setPath] = useState('');
   const [pipeline, setPipeline] = useState('auto');
+  const [message, setMessage] = useState('');
 
   const load = async () => setWatchers(await api.watchers());
 
@@ -21,12 +29,19 @@ export function Watchers({ user }: Props) {
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     if (!path.trim()) return;
-    await api.addWatcher({
-      path: path.trim(),
-      pipeline_override: pipeline === 'auto' ? undefined : pipeline,
-    });
+    const watcherAPI = (window as LobCutWindow).watcherAPI;
+    if (watcherAPI) {
+      await watcherAPI.add(path.trim());
+    } else {
+      await api.addWatcher({
+        path: path.trim(),
+        pipeline_override: pipeline === 'auto' ? undefined : pipeline,
+      });
+    }
     setPath('');
     setPipeline('auto');
+    setMessage('Watcher started.');
+    window.setTimeout(() => setMessage(''), 2000);
     await load();
   };
 
@@ -57,6 +72,7 @@ export function Watchers({ user }: Props) {
           watchers.map((watcher) => (
             <article className="watcherRow" key={watcher.id}>
               <div>
+                <i className={`watcherDot ${watcher.enabled ? 'active' : ''}`} />
                 <code>{watcher.path}</code>
                 <span>{watcher.pipeline_override || 'auto'}</span>
               </div>
@@ -65,7 +81,12 @@ export function Watchers({ user }: Props) {
                   type="checkbox"
                   checked={watcher.enabled}
                   onChange={async (event) => {
-                    await api.updateWatcher(watcher.id, event.target.checked);
+                    const watcherAPI = (window as LobCutWindow).watcherAPI;
+                    if (watcherAPI) {
+                      await watcherAPI.toggle(watcher.id, watcher.path, event.target.checked);
+                    } else {
+                      await api.updateWatcher(watcher.id, event.target.checked);
+                    }
                     await load();
                   }}
                 />
@@ -75,7 +96,12 @@ export function Watchers({ user }: Props) {
                 type="button"
                 className="compactButton dangerButton"
                 onClick={async () => {
-                  await api.deleteWatcher(watcher.id);
+                  const watcherAPI = (window as LobCutWindow).watcherAPI;
+                  if (watcherAPI) {
+                    await watcherAPI.remove(watcher.id, watcher.path);
+                  } else {
+                    await api.deleteWatcher(watcher.id);
+                  }
                   await load();
                 }}
               >
@@ -85,6 +111,7 @@ export function Watchers({ user }: Props) {
           ))
         )}
       </section>
+      {message ? <div className="toastBanner success">{message}</div> : null}
     </main>
   );
 }

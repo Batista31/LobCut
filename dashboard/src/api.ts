@@ -1,5 +1,3 @@
-import { navigate } from './navigation';
-
 const BASE = 'http://localhost:8000';
 
 export type User = {
@@ -37,6 +35,7 @@ export type Watcher = {
   id: number;
   user_id: string;
   path: string;
+  media_type?: string | null;
   pipeline_override?: string | null;
   enabled: boolean;
   created_at: string;
@@ -71,7 +70,6 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
     credentials: 'include',
   });
   if (res.status === 401) {
-    navigate('/login');
     throw new Error('Unauthorized');
   }
   if (!res.ok) {
@@ -101,6 +99,14 @@ export const api = {
       body: JSON.stringify({ enabled }),
     }),
   deleteWatcher: (id: number) => apiFetch<{ status: string }>(`/watchers/${id}`, { method: 'DELETE' }),
+  settings: () => apiFetch<Record<string, string | null>>('/settings'),
+  saveSetting: (key: string, value: string) =>
+    apiFetch<{ key: string; value: string }>('/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key, value }),
+    }),
+  testTelegramNotification: () => apiFetch<{ success: boolean; error?: string }>('/telegram/test', { method: 'POST' }),
   telegramSettings: () => apiFetch<TelegramSettings>('/auth/telegram/settings'),
   linkTelegram: (chat_id: string) =>
     apiFetch<{ status: string }>('/auth/telegram/link', {

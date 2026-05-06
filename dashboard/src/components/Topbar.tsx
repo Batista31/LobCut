@@ -1,6 +1,6 @@
 import { useState } from 'react';
-import { type User } from '../api';
-import { routeHref } from '../navigation';
+import { api, type User } from '../api';
+import { navigate, routeHref } from '../navigation';
 
 type Props = {
   user: User;
@@ -12,39 +12,31 @@ export function Topbar({ user, currentPath }: Props) {
 
   return (
     <header className="topbar">
-      {/* Brand — logo image only, no duplicate text */}
       <div className="brandBlock">
-        <a href={routeHref('/')} className="logoLink">
-          <img className="logoImage" src="/logo-white.jpeg" alt="LobCut" />
+        <a href={routeHref('/')} className="brandLink">
+          <span className="markFrame">
+            <img className="logoImage" src="lobcut-mark.jpeg?v=mark" alt="LobCut mark" />
+          </span>
+          <span className="brandWordmark">LOBCUT</span>
         </a>
       </div>
 
-      {/* Navigation */}
       <nav>
-        <a href={routeHref('/')} className={currentPath === '/' ? 'navActive' : ''}>
-          Jobs
-        </a>
-        <a href={routeHref('/watchers')} className={currentPath === '/watchers' ? 'navActive' : ''}>
-          Watchers
-        </a>
-        <a href={routeHref('/openclaw')} className={currentPath === '/openclaw' ? 'navActive' : ''}>
-          OpenClaw
-        </a>
-        <a href={routeHref('/settings')} className={currentPath === '/settings' ? 'navActive' : ''}>
-          Settings
-        </a>
+        <a href={routeHref('/')} className={currentPath === '/' ? 'navActive' : ''}>Jobs</a>
+        <a href={routeHref('/watchers')} className={currentPath === '/watchers' ? 'navActive' : ''}>Watchers</a>
+        <a href={routeHref('/openclaw')} className={currentPath === '/openclaw' ? 'navActive' : ''}>OpenClaw</a>
+        <a href={routeHref('/settings')} className={currentPath === '/settings' ? 'navActive' : ''}>Settings</a>
       </nav>
 
-      {/* Avatar — icon only, clickable → profile */}
       <div className="userBlock">
-        <div className="avatarWrapper" onClick={() => setMenuOpen((o) => !o)}>
+        <div className="avatarWrapper" onClick={() => setMenuOpen((open) => !open)}>
           {user.picture ? (
             <img className="avatarImg" src={user.picture} alt={user.name || 'Profile'} />
           ) : (
             <span className="avatarFallback">{(user.name || user.email || 'U')[0].toUpperCase()}</span>
           )}
           {menuOpen && (
-            <div className="avatarMenu" onClick={(e) => e.stopPropagation()}>
+            <div className="avatarMenu" onClick={(event) => event.stopPropagation()}>
               <div className="avatarMenuHeader">
                 {user.picture ? (
                   <img className="avatarMenuImg" src={user.picture} alt="" />
@@ -58,28 +50,28 @@ export function Topbar({ user, currentPath }: Props) {
               </div>
               <div className="avatarMenuDivider" />
               <a href={routeHref('/profile')} className="avatarMenuItem" onClick={() => setMenuOpen(false)}>
-                <span>👤</span> Edit Profile
+                <span>Profile</span>
               </a>
               <a href={routeHref('/settings')} className="avatarMenuItem" onClick={() => setMenuOpen(false)}>
-                <span>⚙️</span> Settings
+                <span>Settings</span>
               </a>
               <div className="avatarMenuDivider" />
-              <a href="http://localhost:8000/auth/logout" className="avatarMenuItem avatarMenuDanger"
-                 onClick={async (e) => {
-                   e.preventDefault();
-                   const { api } = await import('../api');
-                   const { navigate } = await import('../navigation');
-                   await api.logout();
-                   navigate('/login');
-                 }}>
-                <span>🚪</span> Sign out
+              <a
+                href="http://localhost:8000/auth/logout"
+                className="avatarMenuItem avatarMenuDanger"
+                onClick={async (event) => {
+                  event.preventDefault();
+                  await api.logout();
+                  navigate('/login');
+                }}
+              >
+                <span>Sign out</span>
               </a>
             </div>
           )}
         </div>
       </div>
 
-      {/* Click-away backdrop */}
       {menuOpen && <div className="avatarBackdrop" onClick={() => setMenuOpen(false)} />}
     </header>
   );

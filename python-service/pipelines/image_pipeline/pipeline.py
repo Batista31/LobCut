@@ -28,6 +28,7 @@ from config.settings import (
     STATUS_PENDING_RETRY,
     TEMP_DIR,
 )
+from config.gemini_client import configured_key_count, generate_with_fallback
 from orchestrator.database import (
     STATUS_DONE,
     STATUS_FAILED,
@@ -37,9 +38,7 @@ from orchestrator.database import (
 
 log = get_logger(__name__)
 
-_gemini_client = None
 _dotenv_loaded = False
-_gemini_quota_blocked_until = 0.0
 
 
 def _image_mime_type(path: Path) -> str:
@@ -59,25 +58,6 @@ def _image_mime_type(path: Path) -> str:
         ".avif": "image/avif",
         ".heic": "image/heic",
     }.get(path.suffix.lower(), "application/octet-stream")
-
-
-def _mark_gemini_quota_blocked(exc: Exception) -> None:
-    global _gemini_quota_blocked_until
-
-    message = str(exc)
-    if "RESOURCE_EXHAUSTED" not in message and "quota" not in message.lower():
-        return
-
-    _gemini_quota_blocked_until = time.time() + 60 * 60
-
-
-def _raise_if_gemini_quota_blocked() -> None:
-    if time.time() < _gemini_quota_blocked_until:
-        remaining_minutes = max(1, int((_gemini_quota_blocked_until - time.time()) / 60))
-        raise RuntimeError(
-            f"Gemini quota is exhausted. AI classification is paused for about {remaining_minutes} more minute(s); "
-            "retry later or switch to a paid/higher-quota key."
-        )
 
 
 def _copy_to_temp(source: Path) -> Path:
@@ -133,30 +113,6 @@ def _load_dotenv_if_present() -> None:
     _dotenv_loaded = True
 
 
-def _get_gemini_client():
-    global _gemini_client
-
-    if _gemini_client is not None:
-        return _gemini_client
-
-    try:
-        from google import genai
-    except ImportError as exc:
-        raise RuntimeError(
-            "google-genai is required for Gemini image classification but is not installed."
-        ) from exc
-
-    _load_dotenv_if_present()
-    api_key = os.getenv(GEMINI_API_KEY_ENV_VAR)
-    if not api_key:
-        raise RuntimeError(
-            f"{GEMINI_API_KEY_ENV_VAR} is not set. Configure the Gemini API key before starting LobCut."
-        )
-
-    _gemini_client = genai.Client(api_key=api_key)
-    return _gemini_client
-
-
 def check_gemini_ready() -> dict:
     """Verify Gemini API connectivity at startup.
 
@@ -167,14 +123,12 @@ def check_gemini_ready() -> dict:
     """
     try:
         _load_dotenv_if_present()
-        api_key = os.getenv(GEMINI_API_KEY_ENV_VAR)
-        if not api_key:
+        if configured_key_count() == 0:
             return {
                 "ready": False,
                 "model": GEMINI_IMAGE_MODEL,
                 "error": f"{GEMINI_API_KEY_ENV_VAR} is not set in your environment or .env file.",
             }
-        _get_gemini_client()  # initialises and caches the client
         return {"ready": True, "model": GEMINI_IMAGE_MODEL, "error": None}
     except Exception as exc:
         return {"ready": False, "model": GEMINI_IMAGE_MODEL, "error": str(exc)}
@@ -197,18 +151,6 @@ def _is_blurry(score: float) -> bool:
 
 
 def _classify_with_gemini(image_path: Path) -> dict:
-    _raise_if_gemini_quota_blocked()
-
-    client = _get_gemini_client()
-    try:
-        from google.genai import errors as genai_errors
-    except ImportError:
-        genai_errors = None
-    try:
-        from google.genai import types as genai_types
-    except ImportError:
-        genai_types = None
-
     prompt = (
         "Classify this image for an autonomous media organizer. "
         "Choose the best dominant category from the allowed list, add concise secondary tags, "
@@ -249,114 +191,77 @@ def _classify_with_gemini(image_path: Path) -> dict:
     }
 
     mime_type = _image_mime_type(image_path)
-    upload_attempts = []
-    if genai_types is not None:
-        upload_attempts.append(
-            lambda: client.files.upload(
-                file=str(image_path),
-                config=genai_types.UploadFileConfig(mime_type=mime_type),
-            )
-        )
-    upload_attempts.extend(
-        [
-            lambda: client.files.upload(file=str(image_path), config={"mime_type": mime_type}),
-            lambda: client.files.upload(file=str(image_path), mime_type=mime_type),
-            lambda: client.files.upload(path=str(image_path), mime_type=mime_type),
-        ]
-    )
+    response_text = None
+    last_error = None
+    key_count = configured_key_count()
+    log.info("[IMAGE] Gemini keys configured: %d", key_count)
+    models_to_try = []
+    for model_name in GEMINI_FALLBACK_MODELS:
+        if model_name not in models_to_try:
+            models_to_try.append(model_name)
+    if GEMINI_IMAGE_MODEL not in models_to_try:
+        models_to_try.insert(0, GEMINI_IMAGE_MODEL)
 
-    uploaded_file = None
-    upload_errors = []
-    for upload in upload_attempts:
-        try:
-            uploaded_file = upload()
-            break
-        except Exception as exc:
-            upload_errors.append(str(exc))
-            continue
-    if uploaded_file is None:
-        raise RuntimeError(
-            f"\u274c Could not upload {image_path.name} to Gemini "
-            f"(format: {mime_type}). Check your internet connection or file format. "
-            "Details: " + " | ".join(upload_errors)
-        )
-    try:
-        response = None
-        last_error = None
-        models_to_try = []
-        for model_name in GEMINI_FALLBACK_MODELS:
-            if model_name not in models_to_try:
-                models_to_try.append(model_name)
-        if GEMINI_IMAGE_MODEL not in models_to_try:
-            models_to_try.insert(0, GEMINI_IMAGE_MODEL)
-
-        for model_name in models_to_try:
-            for attempt in range(1, GEMINI_MAX_RETRIES_PER_MODEL + 1):
-                try:
-                    log.info(
-                        "[IMAGE] Gemini classify attempt %d/%d using %s for %s",
-                        attempt,
-                        GEMINI_MAX_RETRIES_PER_MODEL,
-                        model_name,
-                        image_path.name,
-                    )
-                    response = client.models.generate_content(
-                        model=model_name,
-                        contents=[uploaded_file, prompt],
-                        config={
-                            "response_mime_type": "application/json",
-                            "response_json_schema": schema,
-                            "temperature": 0.1,
-                        },
-                    )
-                    last_error = None
-                    break
-                except Exception as exc:
-                    last_error = exc
-                    status_code = getattr(exc, "status_code", None)
-                    message = str(exc)
-                    if status_code == 429 or "RESOURCE_EXHAUSTED" in message or "quota" in message.lower():
-                        _mark_gemini_quota_blocked(exc)
-                        remaining_min = max(1, int((_gemini_quota_blocked_until - time.time()) / 60))
-                        raise RuntimeError(
-                            f"\u26a0\ufe0f Gemini daily quota reached. "
-                            f"Auto-retry will resume when quota resets "
-                            f"(~{remaining_min} min remaining). "
-                            f"Original error: {exc}"
-                        ) from exc
-
-                    is_retryable = status_code in {429, 500, 503}
-                    if genai_errors is not None and isinstance(exc, getattr(genai_errors, "ServerError", tuple())):
-                        is_retryable = True
-
+    for model_name in models_to_try:
+        for attempt in range(1, GEMINI_MAX_RETRIES_PER_MODEL + 1):
+            try:
+                log.info(
+                    "[IMAGE] Gemini classify attempt %d/%d using %s for %s",
+                    attempt,
+                    GEMINI_MAX_RETRIES_PER_MODEL,
+                    model_name,
+                    image_path.name,
+                )
+                response_text = generate_with_fallback(
+                    model_name=model_name,
+                    contents=[prompt],
+                    file_path=str(image_path),
+                    mime_type=mime_type,
+                    config={
+                        "response_mime_type": "application/json",
+                        "response_json_schema": schema,
+                        "temperature": 0.1,
+                    },
+                )
+                last_error = None
+                break
+            except Exception as exc:
+                last_error = exc
+                status_code = getattr(exc, "status_code", None)
+                message = str(exc)
+                if status_code == 429 or "RESOURCE_EXHAUSTED" in message or "quota" in message.lower():
                     log.warning(
-                        "[IMAGE] Gemini request failed for %s with model %s on attempt %d/%d: %s",
+                        "[IMAGE] Gemini quota response after trying %d configured key(s) for %s with %s: %s",
+                        key_count,
                         image_path.name,
                         model_name,
-                        attempt,
-                        GEMINI_MAX_RETRIES_PER_MODEL,
                         exc,
                     )
-                    if not is_retryable or attempt == GEMINI_MAX_RETRIES_PER_MODEL:
-                        break
-                    time.sleep(GEMINI_RETRY_DELAY_SECONDS * attempt)
+                    raise
 
-            if response is not None:
-                break
+                log.warning(
+                    "[IMAGE] Gemini request failed for %s with model %s on attempt %d/%d: %s",
+                    image_path.name,
+                    model_name,
+                    attempt,
+                    GEMINI_MAX_RETRIES_PER_MODEL,
+                    exc,
+                )
+                if status_code not in {500, 503} or attempt == GEMINI_MAX_RETRIES_PER_MODEL:
+                    break
+                time.sleep(GEMINI_RETRY_DELAY_SECONDS * attempt)
 
-        if response is None:
-            raise RuntimeError(
-                f"\u274c Gemini did not respond after {GEMINI_MAX_RETRIES_PER_MODEL} attempt(s) "
-                f"for {image_path.name}. Image held in unclassified/ for auto-retry. "
-                f"Last error: {last_error}"
-            )
-    finally:
-        try:
-            client.files.delete(name=uploaded_file.name)
-        except Exception:
-            log.warning("Could not delete uploaded Gemini file for %s", image_path.name)
+        if response_text is not None:
+            break
 
-    parsed = json.loads(response.text)
+    if response_text is None:
+        raise RuntimeError(
+            f"\u274c Gemini did not respond after {GEMINI_MAX_RETRIES_PER_MODEL} attempt(s) "
+            f"for {image_path.name}. Image held in unclassified/ for auto-retry. "
+            f"Last error: {last_error}"
+        )
+
+    parsed = json.loads(response_text)
     category = str(parsed.get("primary_category", DEFAULT_IMAGE_CATEGORY)).strip().lower()
     if category not in GEMINI_BASE_CATEGORIES:
         category = DEFAULT_IMAGE_CATEGORY

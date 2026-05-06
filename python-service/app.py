@@ -30,14 +30,18 @@ from orchestrator.database import (
     STATUS_PENDING,
     add_watcher,
     delete_watcher,
+    get_setting,
     get_job_by_id,
     get_user_notification_settings,
     init_db,
+    list_settings,
     list_jobs_for_dashboard,
     list_watchers,
     retry_job,
     set_telegram_chat_id,
     set_watcher_enabled,
+    soft_delete_job,
+    upsert_setting,
     upsert_user,
 )
 
@@ -108,7 +112,9 @@ class JobOut(BaseModel):
 
 class WatcherIn(BaseModel):
     path: str = Field(min_length=1)
+    media_type: Optional[str] = "auto"
     pipeline_override: Optional[str] = None
+    enabled: Optional[bool] = True
 
 
 class WatcherPatch(BaseModel):
@@ -119,6 +125,7 @@ class WatcherOut(BaseModel):
     id: int
     user_id: str
     path: str
+    media_type: Optional[str] = "auto"
     pipeline_override: Optional[str] = None
     enabled: bool
     created_at: str
@@ -137,6 +144,21 @@ class TelegramSettingsOut(BaseModel):
 
 class TelegramTestOut(BaseModel):
     status: str
+
+
+class SettingIn(BaseModel):
+    key: str = Field(min_length=1)
+    value: str = ""
+
+
+class SettingOut(BaseModel):
+    key: str
+    value: Optional[str] = None
+
+
+class TelegramDirectTestOut(BaseModel):
+    success: bool
+    error: Optional[str] = None
 
 
 def _row_to_dict(row) -> dict:
@@ -279,6 +301,22 @@ async def get_current_user(request: Request) -> dict:
     }
 
 
+async def get_optional_user(request: Request) -> dict:
+    token = request.cookies.get(COOKIE_NAME)
+    if not token:
+        return {"sub": "local", "email": None, "name": "Local", "picture": None}
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        return {
+            "sub": payload["sub"],
+            "email": payload.get("email"),
+            "name": payload.get("name"),
+            "picture": payload.get("picture"),
+        }
+    except JWTError:
+        return {"sub": "local", "email": None, "name": "Local", "picture": None}
+
+
 @app.on_event("startup")
 def startup() -> None:
     init_db()
@@ -379,13 +417,14 @@ def link_telegram(
     user: dict = Depends(get_current_user),
 ) -> dict[str, str]:
     set_telegram_chat_id(user["sub"], body.chat_id)
+    upsert_setting("telegram_chat_id", body.chat_id)
     return {"status": "ok"}
 
 
 @app.get("/auth/telegram/settings", response_model=TelegramSettingsOut)
 def telegram_settings(user: dict = Depends(get_current_user)) -> TelegramSettingsOut:
     settings = get_user_notification_settings(user["sub"])
-    chat_id = settings.get("telegram_chat_id")
+    chat_id = get_setting("telegram_chat_id") or settings.get("telegram_chat_id")
     return TelegramSettingsOut(
         configured=bool(os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()),
         linked=bool(chat_id),
@@ -404,7 +443,7 @@ async def test_telegram(user: dict = Depends(get_current_user)) -> TelegramTestO
     if not chat_id:
         raise HTTPException(status_code=400, detail="Link your Telegram chat ID first.")
 
-    message = "LobCut Telegram notifications are working."
+    message = "🧪 LobCut test notification is working!"
     async with httpx.AsyncClient(timeout=10) as client:
         response = await client.post(
             f"https://api.telegram.org/bot{token}/sendMessage",
@@ -464,12 +503,12 @@ async def openclaw_status(user: dict = Depends(get_current_user)) -> dict:
 
 
 @app.get("/jobs", response_model=list[JobOut])
-def get_jobs(user: dict = Depends(get_current_user)) -> list[JobOut]:
+def get_jobs(user: dict = Depends(get_optional_user)) -> list[JobOut]:
     return [_job_out(row) for row in list_jobs_for_dashboard(user_id=user["sub"], limit=50)]
 
 
 @app.get("/jobs/{job_id}", response_model=JobOut)
-def get_job(job_id: int, user: dict = Depends(get_current_user)) -> JobOut:
+def get_job(job_id: int, user: dict = Depends(get_optional_user)) -> JobOut:
     row = get_job_by_id(job_id, user_id=user["sub"])
     if row is None or row["status"] == STATUS_DELETED:
         raise HTTPException(status_code=404, detail="Job not found.")
@@ -477,7 +516,7 @@ def get_job(job_id: int, user: dict = Depends(get_current_user)) -> JobOut:
 
 
 @app.get("/jobs/{job_id}/image")
-def get_job_image(job_id: int, user: dict = Depends(get_current_user)) -> StreamingResponse:
+def get_job_image(job_id: int, user: dict = Depends(get_optional_user)) -> StreamingResponse:
     row = get_job_by_id(job_id, user_id=user["sub"]) or get_job_by_id(job_id, user_id="local")
     if row is None or row["status"] == STATUS_DELETED:
         raise HTTPException(status_code=404, detail="Job not found.")
@@ -491,7 +530,7 @@ def get_job_image(job_id: int, user: dict = Depends(get_current_user)) -> Stream
 
 
 @app.get("/jobs/{job_id}/preview")
-def get_job_preview(job_id: int, user: dict = Depends(get_current_user)) -> StreamingResponse:
+def get_job_preview(job_id: int, user: dict = Depends(get_optional_user)) -> StreamingResponse:
     row = get_job_by_id(job_id, user_id=user["sub"]) or get_job_by_id(job_id, user_id="local")
     if row is None or row["status"] == STATUS_DELETED:
         raise HTTPException(status_code=404, detail="Job not found.")
@@ -505,30 +544,32 @@ def get_job_preview(job_id: int, user: dict = Depends(get_current_user)) -> Stre
 
 
 @app.post("/jobs/retry/{job_id}")
-def retry_existing_job(job_id: int, user: dict = Depends(get_current_user)) -> dict[str, str]:
+def retry_existing_job(job_id: int, user: dict = Depends(get_optional_user)) -> dict[str, str]:
     if not retry_job(job_id, user["sub"]):
         raise HTTPException(status_code=404, detail="Job not found.")
     return {"status": STATUS_PENDING}
 
 
 @app.delete("/jobs/{job_id}")
-def delete_existing_job(job_id: int, user: dict = Depends(get_current_user)) -> dict[str, bool | int]:
-    if not _delete_job_row(job_id, user["sub"]):
+def delete_existing_job(job_id: int, user: dict = Depends(get_optional_user)) -> dict[str, bool | int]:
+    if not soft_delete_job(job_id, user["sub"]):
         raise HTTPException(status_code=404, detail="Job not found.")
     return {"deleted": True, "job_id": job_id}
 
 
 @app.get("/watchers", response_model=list[WatcherOut])
-def get_watchers(user: dict = Depends(get_current_user)) -> list[WatcherOut]:
+def get_watchers(user: dict = Depends(get_optional_user)) -> list[WatcherOut]:
     return [_watcher_out(row) for row in list_watchers(user["sub"])]
 
 
 @app.post("/watchers", response_model=WatcherOut)
-def create_watcher(body: WatcherIn, user: dict = Depends(get_current_user)) -> WatcherOut:
+def create_watcher(body: WatcherIn, user: dict = Depends(get_optional_user)) -> WatcherOut:
     watcher_id = add_watcher(
         user["sub"],
         Path(body.path).expanduser(),
+        media_type=body.media_type or "auto",
         pipeline_override=body.pipeline_override,
+        enabled=True if body.enabled is None else body.enabled,
     )
     row = next((item for item in list_watchers(user["sub"]) if int(item["id"]) == watcher_id), None)
     if row is None:
@@ -540,7 +581,7 @@ def create_watcher(body: WatcherIn, user: dict = Depends(get_current_user)) -> W
 def update_watcher(
     watcher_id: int,
     body: WatcherPatch,
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(get_optional_user),
 ) -> WatcherOut:
     if not set_watcher_enabled(watcher_id, user["sub"], body.enabled):
         raise HTTPException(status_code=404, detail="Watcher not found.")
@@ -551,14 +592,14 @@ def update_watcher(
 
 
 @app.delete("/watchers/{watcher_id}")
-def remove_watcher(watcher_id: int, user: dict = Depends(get_current_user)) -> dict[str, str]:
+def remove_watcher(watcher_id: int, user: dict = Depends(get_optional_user)) -> dict[str, str]:
     if not delete_watcher(watcher_id, user["sub"]):
         raise HTTPException(status_code=404, detail="Watcher not found.")
     return {"status": "deleted"}
 
 
 @app.get("/jobs/{job_id}/download")
-def download_job_output(job_id: int, user: dict = Depends(get_current_user)):
+def download_job_output(job_id: int, user: dict = Depends(get_optional_user)):
     row = get_job_by_id(job_id, user_id=user["sub"]) or get_job_by_id(job_id, user_id="local")
     if row is None or row["status"] == STATUS_DELETED:
         raise HTTPException(status_code=404, detail="Job not found.")
@@ -569,6 +610,38 @@ def download_job_output(job_id: int, user: dict = Depends(get_current_user)):
 
 
 CAPTION_OVERRIDES_PATH = Path(os.environ.get("DB_PATH", "data/jobs.db")).parent / "caption_overrides.json"
+
+
+@app.get("/settings")
+def get_settings() -> dict[str, Optional[str]]:
+    return list_settings()
+
+
+@app.post("/settings", response_model=SettingOut)
+def save_setting(body: SettingIn) -> SettingOut:
+    upsert_setting(body.key, body.value)
+    return SettingOut(key=body.key, value=body.value)
+
+
+@app.post("/telegram/test", response_model=TelegramDirectTestOut)
+async def test_telegram_direct() -> TelegramDirectTestOut:
+    token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+    if not token:
+        return TelegramDirectTestOut(success=False, error="TELEGRAM_BOT_TOKEN is not configured.")
+
+    chat_id = get_setting("telegram_chat_id") or os.environ.get("TELEGRAM_CHAT_ID", "").strip()
+    if not chat_id:
+        return TelegramDirectTestOut(success=False, error="Telegram Chat ID is not configured.")
+
+    async with httpx.AsyncClient(timeout=10) as client:
+        response = await client.post(
+            f"https://api.telegram.org/bot{token}/sendMessage",
+            json={"chat_id": chat_id, "text": "🧪 LobCut test notification is working!"},
+        )
+
+    if not response.is_success:
+        return TelegramDirectTestOut(success=False, error=response.text)
+    return TelegramDirectTestOut(success=True)
 
 
 @app.get("/settings/captions")
@@ -656,6 +729,14 @@ def update_caption_settings(
     existing.update(updates)
     CAPTION_OVERRIDES_PATH.write_text(_json.dumps(existing, indent=2), encoding="utf-8")
     return {"status": "ok"}
+
+
+@app.get("/settings/{key}", response_model=SettingOut)
+def get_setting_value(key: str) -> SettingOut:
+    value = get_setting(key)
+    if value is None:
+        raise HTTPException(status_code=404, detail="Setting not found.")
+    return SettingOut(key=key, value=value)
 
 
 class SPAStaticFiles(StaticFiles):

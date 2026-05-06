@@ -62,6 +62,7 @@ CREATE TABLE IF NOT EXISTS watchers (
     id                INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id           TEXT NOT NULL,
     path              TEXT NOT NULL,
+    media_type         TEXT DEFAULT 'auto',
     pipeline_override TEXT,
     enabled           INTEGER DEFAULT 1,
     created_at        TEXT NOT NULL,
@@ -69,6 +70,11 @@ CREATE TABLE IF NOT EXISTS watchers (
     UNIQUE(user_id, path)
 );
 CREATE INDEX IF NOT EXISTS idx_watchers_user ON watchers (user_id);
+
+CREATE TABLE IF NOT EXISTS settings (
+    key               TEXT PRIMARY KEY,
+    value             TEXT
+);
 
 CREATE TABLE IF NOT EXISTS reel_jobs (
     id               INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -210,6 +216,7 @@ def _ensure_watcher_columns(conn) -> None:
         for row in conn.execute("PRAGMA table_info(watchers)").fetchall()
     }
     optional_columns = {
+        "media_type": "TEXT DEFAULT 'auto'",
         "pipeline_override": "TEXT",
         "enabled": "INTEGER DEFAULT 1",
         "updated_at": "TEXT NOT NULL DEFAULT ''",
@@ -638,11 +645,38 @@ def get_first_linked_telegram_chat_id() -> Optional[str]:
     return row["telegram_chat_id"] if row is not None else None
 
 
+def list_settings() -> dict[str, str | None]:
+    with _connect() as conn:
+        rows = conn.execute("SELECT key, value FROM settings ORDER BY key").fetchall()
+    return {row["key"]: row["value"] for row in rows}
+
+
+def get_setting(key: str) -> Optional[str]:
+    with _connect() as conn:
+        row = conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+    return row["value"] if row is not None else None
+
+
+def upsert_setting(key: str, value: str) -> None:
+    with _connect() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
+            (key, value),
+        )
+
+
 def list_watchers(user_id: str) -> list[sqlite3.Row]:
     with _connect() as conn:
+        if user_id == DEFAULT_USER_ID:
+            return conn.execute("SELECT * FROM watchers ORDER BY created_at DESC").fetchall()
         return conn.execute(
-            "SELECT * FROM watchers WHERE user_id = ? ORDER BY created_at DESC",
-            (user_id,),
+            """
+            SELECT *
+            FROM watchers
+            WHERE user_id = ? OR user_id = ?
+            ORDER BY created_at DESC
+            """,
+            (user_id, DEFAULT_USER_ID),
         ).fetchall()
 
 
@@ -657,19 +691,22 @@ def add_watcher(
     user_id: str,
     path: Path,
     pipeline_override: str = None,
+    media_type: str = "auto",
+    enabled: bool = True,
 ) -> int:
     now = _now()
     with _connect() as conn:
         cur = conn.execute(
             """
-            INSERT INTO watchers (user_id, path, pipeline_override, enabled, created_at, updated_at)
-            VALUES (?, ?, ?, 1, ?, ?)
+            INSERT INTO watchers (user_id, path, media_type, pipeline_override, enabled, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(user_id, path) DO UPDATE SET
+                media_type = excluded.media_type,
                 pipeline_override = excluded.pipeline_override,
-                enabled = 1,
+                enabled = excluded.enabled,
                 updated_at = excluded.updated_at
             """,
-            (user_id, str(path), pipeline_override, now, now),
+            (user_id, str(path), media_type, pipeline_override, 1 if enabled else 0, now, now),
         )
         if cur.lastrowid:
             return int(cur.lastrowid)
@@ -683,19 +720,28 @@ def add_watcher(
 def set_watcher_enabled(watcher_id: int, user_id: str, enabled: bool) -> bool:
     now = _now()
     with _connect() as conn:
-        cur = conn.execute(
-            "UPDATE watchers SET enabled = ?, updated_at = ? WHERE id = ? AND user_id = ?",
-            (1 if enabled else 0, now, watcher_id, user_id),
-        )
+        if user_id == DEFAULT_USER_ID:
+            cur = conn.execute(
+                "UPDATE watchers SET enabled = ?, updated_at = ? WHERE id = ?",
+                (1 if enabled else 0, now, watcher_id),
+            )
+        else:
+            cur = conn.execute(
+                "UPDATE watchers SET enabled = ?, updated_at = ? WHERE id = ? AND user_id = ?",
+                (1 if enabled else 0, now, watcher_id, user_id),
+            )
     return cur.rowcount > 0
 
 
 def delete_watcher(watcher_id: int, user_id: str) -> bool:
     with _connect() as conn:
-        cur = conn.execute(
-            "DELETE FROM watchers WHERE id = ? AND user_id = ?",
-            (watcher_id, user_id),
-        )
+        if user_id == DEFAULT_USER_ID:
+            cur = conn.execute("DELETE FROM watchers WHERE id = ?", (watcher_id,))
+        else:
+            cur = conn.execute(
+                "DELETE FROM watchers WHERE id = ? AND user_id = ?",
+                (watcher_id, user_id),
+            )
     return cur.rowcount > 0
 
 

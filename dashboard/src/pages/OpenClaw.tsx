@@ -36,6 +36,10 @@ export function OpenClaw({ user }: Props) {
   const saveTelegram = async (event: FormEvent) => {
     event.preventDefault();
     setTelegramMsg('');
+    if (!/^-?\d+$/.test(chatId.trim())) {
+      setTelegramMsg('Enter the numeric Telegram Chat ID, not your phone number.');
+      return;
+    }
     try {
       await api.linkTelegram(chatId.trim());
       await loadTelegram();
@@ -121,27 +125,43 @@ export function OpenClaw({ user }: Props) {
                 <span className={`statusDot ${telegram?.configured ? (telegram?.linked ? 'green' : 'yellow') : 'red'}`} />
                 {!telegram?.configured ? 'bot token not configured' : telegram?.linked ? 'linked' : 'not linked'}
               </strong>
-              <form className="settingsForm" onSubmit={saveTelegram}>
-                <div className="inlineForm">
-                  <input
-                    value={chatId}
-                    onChange={(e) => setChatId(e.target.value)}
-                    placeholder="Telegram Chat ID"
-                  />
-                  <button type="submit">Link</button>
-                  <button
-                    type="button"
-                    onClick={() => void testTelegram()}
-                    disabled={!telegram?.configured || !chatId.trim()}
-                  >
-                    Test
-                  </button>
+              <div className="telegramLinkLayout">
+                <div className="telegramQrCard">
+                  <img className="telegramQr" src="lobcut-telegram.png?v=telegram" alt="LobCut Telegram bot QR code" />
+                  <span>Scan to open LobCut bot</span>
                 </div>
-              </form>
-              {telegramMsg ? <p className="settingsMessage" style={{ padding: '8px 0 0' }}>{telegramMsg}</p> : null}
-              <p className="settingsHint" style={{ padding: '4px 0 0', fontSize: '12px' }}>
-                Message your bot first, then paste your numeric chat ID here.
-              </p>
+                <div className="telegramLinkContent">
+                  <form className="settingsForm" onSubmit={saveTelegram}>
+                    <div className="inlineForm">
+                      <input
+                        value={chatId}
+                        onChange={(e) => setChatId(e.target.value)}
+                        placeholder="Numeric Telegram Chat ID"
+                      />
+                      <button type="submit">Link</button>
+                      <button
+                        type="button"
+                        onClick={() => void testTelegram()}
+                        disabled={!telegram?.configured || !chatId.trim()}
+                      >
+                        Test
+                      </button>
+                    </div>
+                  </form>
+                  {telegramMsg ? <p className="settingsMessage" style={{ padding: '8px 0 0' }}>{telegramMsg}</p> : null}
+                  <div className="telegramSteps">
+                    <strong>How to link Telegram:</strong>
+                    <ol>
+                      <li>Scan the QR code or open the LobCut bot in Telegram.</li>
+                      <li>Send /start to the LobCut bot.</li>
+                      <li>Open @userinfobot and send /start.</li>
+                      <li>Copy only the numeric ID it replies with, like 1179051234.</li>
+                      <li>Paste that number here, click Link, then Test.</li>
+                    </ol>
+                    <p>This is not your phone number. Telegram requires you to start the LobCut bot once before private notifications can work.</p>
+                  </div>
+                </div>
+              </div>
             </article>
           </div>
         ) : (

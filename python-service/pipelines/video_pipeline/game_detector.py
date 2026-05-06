@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import base64
 import json
-import os
 from pathlib import Path
 
-from config.settings import GEMINI_API_KEY_ENV_VAR, GEMINI_IMAGE_MODEL, VIDEO_GENRES
+from config.gemini_client import generate_with_fallback
+from config.settings import GEMINI_IMAGE_MODEL, VIDEO_GENRES
 
 
 def _read_image_b64(path: str) -> str:
@@ -25,11 +25,6 @@ def detect_game(frame_paths: list[str], transcript_text: str) -> dict:
     if not sampled:
         return fallback
 
-    try:
-        from google import genai
-    except ImportError:
-        return fallback
-
     prompt = (
         "You are a video game analyst. Based on gameplay frames and transcript, "
         "identify game and genre. Respond ONLY in JSON with keys: game_title, game_genre, "
@@ -39,10 +34,8 @@ def detect_game(frame_paths: list[str], transcript_text: str) -> dict:
     for path in sampled:
         contents.append({"mime_type": "image/jpeg", "data": _read_image_b64(path)})
     try:
-        api_key = os.getenv(GEMINI_API_KEY_ENV_VAR)
-        client = genai.Client(api_key=api_key) if api_key else genai.Client()
-        resp = client.models.generate_content(model=GEMINI_IMAGE_MODEL, contents=contents)
-        parsed = json.loads(resp.text)
+        response_text = generate_with_fallback(model_name=GEMINI_IMAGE_MODEL, contents=contents)
+        parsed = json.loads(response_text)
     except Exception:
         return fallback
 
