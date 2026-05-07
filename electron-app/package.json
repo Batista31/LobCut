@@ -5,7 +5,10 @@
   "main": "main.js",
   "scripts": {
     "start": "electron .",
-    "build": "electron-builder"
+    "build": "electron-builder",
+    "build:dashboard": "cd ../dashboard && npm install && npm run build",
+    "build:win": "npm run build:dashboard && electron-builder --win nsis",
+    "pack:win": "npm run build:dashboard && electron-builder --win --dir"
   },
   "dependencies": {
     "chokidar": "^3.6.0",
@@ -15,10 +18,36 @@
   "build": {
     "appId": "com.lobcut.desktop",
     "productName": "LobCut",
+    "directories": {
+      "output": "dist"
+    },
     "files": [
       "**/*",
-      "../dashboard/**/*",
-      "../docker-compose.yml"
+      "!dist/**",
+      "!out/**",
+      "!npm-cache/**"
+    ],
+    "extraResources": [
+      {
+        "from": "../dashboard/dist",
+        "to": "dashboard/dist"
+      },
+      {
+        "from": "../docker-compose.yml",
+        "to": "docker-compose.yml"
+      },
+      {
+        "from": "../LobCut mark.jpeg",
+        "to": "LobCut mark.jpeg"
+      },
+      {
+        "from": "../LobCut mark.png",
+        "to": "LobCut mark.png"
+      },
+      {
+        "from": "../LobCut telegram.png",
+        "to": "LobCut telegram.png"
+      }
     ],
     "mac": {
       "target": "dmg"

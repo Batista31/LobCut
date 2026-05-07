@@ -6,7 +6,7 @@ const chokidar = require('chokidar');
 const { composeStop, composeUp, logFile } = require('./lib/docker');
 const { pollHealth } = require('./lib/poller');
 
-const projectRoot = path.join(__dirname, '..');
+const projectRoot = app.isPackaged ? process.resourcesPath : path.join(__dirname, '..');
 const dashboardDistPath = path.join(projectRoot, 'dashboard', 'dist', 'index.html');
 const dashboardPublicPath = path.join(projectRoot, 'dashboard', 'public');
 const desktopFallbackPath = path.join(__dirname, 'desktop.html');
@@ -31,8 +31,9 @@ dns.setDefaultResultOrder('ipv4first');
 function copyDashboardAssets() {
   try {
     const assets = [
-      { src: 'D:\\LobCut\\LobCut mark.jpeg', filename: 'lobcut-mark.jpeg' },
-      { src: 'D:\\LobCut\\LobCut telegram.png', filename: 'lobcut-telegram.png' },
+      { src: path.join(projectRoot, 'LobCut mark.jpeg'), filename: 'lobcut-mark.jpeg' },
+      { src: path.join(projectRoot, 'LobCut mark.png'), filename: 'lobcut-mark.png' },
+      { src: path.join(projectRoot, 'LobCut telegram.png'), filename: 'lobcut-telegram.png' },
     ];
     const assetDirs = [
       dashboardPublicPath,
@@ -143,7 +144,7 @@ async function injectTelegramQrHelp() {
 
   let qrDataUrl = '';
   try {
-    const qrPath = 'D:\\LobCut\\LobCut telegram.png';
+    const qrPath = path.join(projectRoot, 'dashboard', 'dist', 'lobcut-telegram.png');
     if (fs.existsSync(qrPath)) {
       qrDataUrl = `data:image/png;base64,${fs.readFileSync(qrPath).toString('base64')}`;
     }

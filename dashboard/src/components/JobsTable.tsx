@@ -102,16 +102,16 @@ export function JobsTable({ jobs, loading, polling, refresh, onDeleteLocal, onTo
       </div>
       <table className="jobsTable">
         <colgroup>
-          <col style={{ width: '4%' }} />
-          <col style={{ width: '16%' }} />
-          <col style={{ width: '6%' }} />
-          <col style={{ width: '6%' }} />
-          <col style={{ width: '8%' }} />
-          <col style={{ width: '8%' }} />
-          <col style={{ width: '18%' }} />
-          <col style={{ width: '10%' }} />
-          <col style={{ width: '8%' }} />
-          <col style={{ width: '16%' }} />
+          <col style={{ width: '56px' }} />
+          <col style={{ width: '240px' }} />
+          <col style={{ width: '80px' }} />
+          <col style={{ width: '82px' }} />
+          <col style={{ width: '110px' }} />
+          <col style={{ width: '110px' }} />
+          <col style={{ width: '230px' }} />
+          <col style={{ width: '150px' }} />
+          <col style={{ width: '160px' }} />
+          <col style={{ width: '210px' }} />
         </colgroup>
         <thead>
           <tr>
@@ -150,15 +150,15 @@ export function JobsTable({ jobs, loading, polling, refresh, onDeleteLocal, onTo
                   {job.ai_category || '-'}
                   {job.error_message ? <div className="errorText">{job.error_message}</div> : null}
                 </td>
-                <td title={job.source_path}><code className="pathText">{job.source_path}</code></td>
+                <td className="pathCell" title={job.source_path}><code className="pathText">{job.source_path}</code></td>
                 <td title={job.created_at}>{job.created_at}</td>
-                <td title="Retry or delete this job">
+                <td className="actionCell" title="Retry or delete this job">
                   <div className="actionGroup">
                     <button type="button" className="compactButton" title="Retry job" onClick={(event) => { event.stopPropagation(); void retry(job); }}>Retry</button>
-                    <button type="button" className="compactButton dangerButton" title="Delete job" onClick={(event) => { event.stopPropagation(); void remove(job); }}>Del</button>
+                    <button type="button" className="compactButton dangerButton" title="Delete job" onClick={(event) => { event.stopPropagation(); void remove(job); }}>Delete</button>
                   </div>
                 </td>
-                <td title={title(job.output_path || '-')}>
+                <td className="outputCell" title={title(job.output_path || '-')}>
                   {doneWithOutput(job) ? (
                     <button type="button" className="outputButton" onClick={(event) => { event.stopPropagation(); void openOutput(job); }}>
                       {isImage(job) ? <img className="outputThumb" src={previewSrc(job)} alt="" loading="lazy" /> : null}

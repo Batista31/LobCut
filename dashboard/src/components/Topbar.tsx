@@ -15,7 +15,7 @@ export function Topbar({ user, currentPath }: Props) {
       <div className="brandBlock">
         <a href={routeHref('/')} className="brandLink">
           <span className="markFrame">
-            <img className="logoImage" src="lobcut-mark.jpeg?v=mark" alt="LobCut mark" />
+            <img className="logoImage" src="lobcut-mark.png?v=mark-png" alt="LobCut mark" />
           </span>
           <span className="brandWordmark">LOBCUT</span>
         </a>

@@ -351,6 +351,9 @@ nav a.navActive {
   border-radius: var(--radius-lg);
   overflow: hidden;
 }
+.tableSection {
+  overflow-x: auto;
+}
 .tableHeader, .sectionHead {
   display: flex; justify-content: space-between; align-items: center;
   padding: 14px 20px;
@@ -379,10 +382,20 @@ tr { cursor: pointer; transition: background 0.1s; }
 tr:hover { background: var(--surface-raised); }
 tr.selected { background: var(--accent-subtle); }
 
-.jobsTable { table-layout: fixed; }
-.actionGroup { display: flex; gap: 4px; align-items: center; }
+.jobsTable { table-layout: fixed; min-width: 1428px; }
+.pathCell { min-width: 0; }
+.actionCell, .outputCell { overflow: hidden; }
+.actionGroup {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: flex-start;
+  white-space: nowrap;
+}
 .compactButton {
-  min-width: 0; padding: 4px 8px;
+  flex: 0 0 auto;
+  min-width: 58px;
+  padding: 5px 10px;
   font-size: 11px; font-weight: 500;
   border-radius: 4px;
 }
@@ -422,6 +435,7 @@ tr.selected { background: var(--accent-subtle); }
   display: block; min-width: 0;
   color: var(--muted); overflow: hidden; text-overflow: ellipsis;
   white-space: nowrap; font-size: 11px;
+  max-width: 100%;
 }
 .errorText { color: var(--error); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .typeBadge, .statusBadge {
