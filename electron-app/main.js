@@ -11,9 +11,9 @@ const dashboardDistPath = path.join(projectRoot, 'dashboard', 'dist', 'index.htm
 const dashboardPublicPath = path.join(projectRoot, 'dashboard', 'public');
 const desktopFallbackPath = path.join(__dirname, 'desktop.html');
 const healthUrl = 'http://localhost:8000/health';
-const dashboardUrl = process.env.LOBCUT_USE_REMOTE_DASHBOARD === '1'
-  ? (process.env.LOBCUT_DASHBOARD_URL || '')
-  : '';
+const dashboardUrl = process.env.LOBCUT_USE_LOCAL_DASHBOARD === '1'
+  ? ''
+  : (process.env.LOBCUT_DASHBOARD_URL || 'http://localhost:3000');
 const skipDocker = process.env.LOBCUT_SKIP_DOCKER === '1';
 const IMAGE_EXTS = ['.jpg', '.jpeg', '.png', '.webp', '.avif', '.heic'];
 const VIDEO_EXTS = ['.mp4', '.mov', '.avi', '.mkv', '.webm'];

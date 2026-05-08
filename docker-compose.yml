@@ -44,6 +44,9 @@ services:
       - GOOGLE_REDIRECT_URI=http://localhost:8000/auth/callback
       - JWT_SECRET=${JWT_SECRET}
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - GEMINI_API_KEY_2=${GEMINI_API_KEY_2}
+      - GEMINI_API_KEY_3=${GEMINI_API_KEY_3}
       - CORS_ALLOW_ORIGINS=http://localhost:3000
       - DASHBOARD_URL=http://localhost:3000
       - OPENCLAW_GATEWAY_URL=http://host.docker.internal:18789

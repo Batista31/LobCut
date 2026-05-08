@@ -124,6 +124,9 @@ class JobOut(BaseModel):
     game_genre: Optional[str] = None
     game_title: Optional[str] = None
     video_duration: Optional[float] = None
+    clip_paths: Optional[str] = None
+    reel_path: Optional[str] = None
+    highlight_timestamps: Optional[str] = None
     image_url: Optional[str] = None
     created_at: str
     updated_at: str

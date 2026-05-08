@@ -1,6 +1,6 @@
 import { FormEvent, useEffect, useState } from 'react';
 import { api, type OpenClawStatus, type TelegramSettings, type User } from '../api';
-import { Topbar } from '../components/Topbar';
+import { Topbar } from '../components/TopbarLive';
 import { routeHref } from '../navigation';
 
 type Props = {

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 from pathlib import Path
 
@@ -10,6 +11,7 @@ from config.settings import (
     BURN_SUBTITLES,
     BUILD_HIGHLIGHT_REEL,
     CLIP_TRIGGERS,
+    ENABLE_CAPTION_PIPELINE,
     FRAME_SAMPLE_INTERVAL_SEC,
     GEMINI_RERANK_CLIPS,
     MAX_HIGHLIGHTS,
@@ -49,6 +51,114 @@ def _summarize_transcript(transcript_text: str) -> str:
     if len(cleaned) <= 240:
         return cleaned
     return f"{cleaned[:237].rstrip()}..."
+
+
+def _segment_words(segment: dict) -> list[dict]:
+    words = segment.get("words") or []
+    normalized = []
+    for word in words:
+        text = (word.get("word") or "").strip()
+        if not text:
+            continue
+        start = float(word.get("start", segment.get("start", 0.0)) or 0.0)
+        end = float(word.get("end", segment.get("end", start + 0.1)) or start + 0.1)
+        normalized.append({"word": text, "start": start, "end": max(end, start + 0.1)})
+    if normalized:
+        return normalized
+
+    text_words = [token.strip() for token in (segment.get("text") or "").split() if token.strip()]
+    if not text_words:
+        return []
+    start = float(segment.get("start", 0.0) or 0.0)
+    end = max(start + 0.2, float(segment.get("end", start + 0.2) or start + 0.2))
+    step = (end - start) / max(1, len(text_words))
+    return [
+        {"word": token, "start": start + (idx * step), "end": start + ((idx + 1) * step)}
+        for idx, token in enumerate(text_words)
+    ]
+
+
+def _caption_words_for_reel(transcript: dict, exported: list[dict]) -> list[dict]:
+    words: list[dict] = []
+    reel_cursor = 0.0
+    segments = transcript.get("segments", [])
+
+    for item in exported:
+        moment = item["moment"]
+        clip_start = float(moment.get("clip_start", 0.0) or 0.0)
+        clip_end = float(moment.get("clip_end", clip_start) or clip_start)
+        try:
+            clip_duration = float(ffmpeg_utils.probe_video(item["clip_path"]).get("duration", 0.0) or 0.0)
+        except Exception:
+            clip_duration = max(0.0, clip_end - clip_start)
+
+        for segment in segments:
+            seg_start = float(segment.get("start", 0.0) or 0.0)
+            seg_end = float(segment.get("end", seg_start) or seg_start)
+            if seg_end < clip_start or seg_start > clip_end:
+                continue
+            for word in _segment_words(segment):
+                word_start = float(word["start"])
+                word_end = float(word["end"])
+                if word_end < clip_start or word_start > clip_end:
+                    continue
+                shifted_start = reel_cursor + max(0.0, word_start - clip_start)
+                shifted_end = reel_cursor + max(0.05, min(clip_end, word_end) - clip_start)
+                if shifted_end <= shifted_start:
+                    shifted_end = shifted_start + 0.1
+                words.append({"word": word["word"], "start": shifted_start, "end": shifted_end})
+
+        reel_cursor += clip_duration
+
+    return words
+
+
+def _parse_srt_time(value: str) -> float:
+    match = re.match(r"(\d+):(\d+):(\d+),(\d+)", value.strip())
+    if not match:
+        return 0.0
+    hours, minutes, seconds, millis = [int(part) for part in match.groups()]
+    return (hours * 3600) + (minutes * 60) + seconds + (millis / 1000.0)
+
+
+def _caption_words_from_clip_srts(exported: list[dict]) -> list[dict]:
+    words: list[dict] = []
+    reel_cursor = 0.0
+
+    for item in exported:
+        clip_path = Path(item["clip_path"])
+        srt_path = clip_path.with_suffix(".srt")
+        try:
+            clip_duration = float(ffmpeg_utils.probe_video(clip_path).get("duration", 0.0) or 0.0)
+        except Exception:
+            moment = item["moment"]
+            clip_duration = max(0.0, float(moment.get("clip_end", 0.0)) - float(moment.get("clip_start", 0.0)))
+
+        if srt_path.exists():
+            blocks = re.split(r"\n\s*\n", srt_path.read_text(encoding="utf-8").strip())
+            for block in blocks:
+                lines = [line.strip() for line in block.splitlines() if line.strip()]
+                if len(lines) < 3 or "-->" not in lines[1]:
+                    continue
+                start_raw, end_raw = [part.strip() for part in lines[1].split("-->", 1)]
+                tokens = " ".join(lines[2:]).split()
+                if not tokens:
+                    continue
+                start = _parse_srt_time(start_raw)
+                end = max(start + 0.2, _parse_srt_time(end_raw))
+                step = (end - start) / max(1, len(tokens))
+                for idx, token in enumerate(tokens):
+                    words.append(
+                        {
+                            "word": token,
+                            "start": reel_cursor + start + (idx * step),
+                            "end": reel_cursor + start + ((idx + 1) * step),
+                        }
+                    )
+
+        reel_cursor += clip_duration
+
+    return words
 
 
 def process_api_job(job_id, source_path) -> dict:
@@ -201,6 +311,7 @@ def run(job_id, source_path):
                     log.warning("[VIDEO] Failed to burn subtitles for %s", clip_file.name)
 
         reel_path = None
+        captioned_reel_path = None
         if BUILD_HIGHLIGHT_REEL:
             reel_name = f"{base_name}_reel1.mp4"
             reel_target = PathResolver.reels_dir() / reel_name
@@ -208,6 +319,23 @@ def run(job_id, source_path):
                 reel_path = reel_assembler.assemble_reel(clip_paths, str(reel_target), max_clips=MAX_REEL_CLIPS)
             except VideoPipelineError:
                 reel_path = None
+            if reel_path and ENABLE_CAPTION_PIPELINE:
+                try:
+                    from pipelines.caption_pipeline.pipeline import run as run_caption_pipeline
+
+                    caption_words = _caption_words_for_reel(transcript, exported[:MAX_REEL_CLIPS])
+                    if not caption_words:
+                        caption_words = _caption_words_from_clip_srts(exported[:MAX_REEL_CLIPS])
+                    captioned_reel_path = run_caption_pipeline(reel_path, words=caption_words)
+                except Exception as exc:
+                    log.warning("[VIDEO] Failed to caption reel %s: %s", reel_path, exc)
+                if not captioned_reel_path:
+                    raise VideoPipelineError(
+                        f"Captioned reel was not created for {Path(reel_path).name}",
+                        recoverable=True,
+                    )
+
+        final_output_path = Path(captioned_reel_path or reel_path or clip_paths[0])
 
         update_job_video_fields(
             job_id=int(job_id),
@@ -220,9 +348,9 @@ def run(job_id, source_path):
                     for m in exported_moments
                 ]
             ),
-            reel_path=reel_path,
+            reel_path=str(captioned_reel_path or reel_path) if (captioned_reel_path or reel_path) else None,
         )
-        update_job_status(int(job_id), STATUS_DONE, output_path=Path(clip_paths[0]))
+        update_job_status(int(job_id), STATUS_DONE, output_path=final_output_path)
     except VideoPipelineError as exc:
         log.exception("[VIDEO] Pipeline error for job #%s: %s", job_id, exc)
         update_job_status(int(job_id), STATUS_FAILED, error_message=str(exc))

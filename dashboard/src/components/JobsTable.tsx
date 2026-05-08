@@ -103,15 +103,15 @@ export function JobsTable({ jobs, loading, polling, refresh, onDeleteLocal, onTo
       <table className="jobsTable">
         <colgroup>
           <col style={{ width: '56px' }} />
-          <col style={{ width: '240px' }} />
-          <col style={{ width: '80px' }} />
-          <col style={{ width: '82px' }} />
-          <col style={{ width: '110px' }} />
-          <col style={{ width: '110px' }} />
-          <col style={{ width: '230px' }} />
+          <col style={{ width: '220px' }} />
+          <col style={{ width: '70px' }} />
+          <col style={{ width: '74px' }} />
+          <col style={{ width: '92px' }} />
+          <col style={{ width: '90px' }} />
           <col style={{ width: '150px' }} />
-          <col style={{ width: '160px' }} />
-          <col style={{ width: '210px' }} />
+          <col style={{ width: '130px' }} />
+          <col style={{ width: '130px' }} />
+          <col style={{ width: '150px' }} />
         </colgroup>
         <thead>
           <tr>

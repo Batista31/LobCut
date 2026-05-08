@@ -1,8 +1,23 @@
 # LobCut
 
-LobCut is a local AI media-processing workstation for creators, editors, and gaming clip makers. It watches folders, processes images and videos, builds highlight clips and reels, records every job in SQLite, and exposes a local dashboard plus optional Telegram notifications.
+**Team Number:** RVCE_BATISTA  
+**Team Name:** Batista  
+**College:** RV College of Engineering
 
-The project is designed to run locally for privacy and hackathon review. Heavy media work happens in the Python service with OpenCV, Gemini, Whisper, FFmpeg, and SQLite. The dashboard is a React/Vite app served by FastAPI or opened through the Electron desktop wrapper.
+LobCut is a local AI media-processing workstation for creators, editors, photographers, and gaming clip makers. It watches folders, processes images and videos, builds highlight clips and reels, records every job in SQLite, and exposes a local dashboard plus optional Telegram notifications.
+
+The project is designed to run locally for privacy and hackathon review. Heavy media work happens in the Python service with OpenCV, Gemini, Whisper, FFmpeg, Librosa, and SQLite. The dashboard is a React/Vite app served by FastAPI or opened through the Electron desktop wrapper.
+
+## Problem
+
+Creators often spend more time preparing content than making it:
+
+- Gamers record long sessions and manually search for highlights.
+- Photographers sort large batches of photos by quality and subject.
+- Short-form creators need clips, captions, and reels quickly.
+- Existing tools usually solve only one part of the workflow.
+
+LobCut brings these steps into one local workflow.
 
 ## What LobCut Does
 
@@ -10,12 +25,26 @@ The project is designed to run locally for privacy and hackathon review. Heavy m
 - Classifies images with local blur detection plus Gemini image understanding.
 - Routes images into organized output folders such as `blurry`, `people`, `wildlife`, `landscape`, `vehicle`, or `other`.
 - Transcribes videos with Whisper.
-- Detects candidate highlight moments from audio/transcript/game context.
+- Detects candidate highlight moments from audio, transcript, and game/context signals.
 - Exports short clips, subtitles, and highlight reels.
+- Builds word-level captioned reel outputs.
 - Stores jobs, statuses, metadata, watchers, and settings in SQLite.
 - Shows jobs, previews, outputs, watch folders, Telegram settings, and OpenClaw status in the dashboard.
 - Sends optional Telegram notifications for queued, processing, completed, and failed jobs.
 - Provides API endpoints for direct file processing and dashboard operations.
+
+## Required Submission Files
+
+The repository includes the hackathon-facing assets:
+
+- **PPT:** `RVCE_BATISTA_LobCut.pptx`
+- **Demo video:** `RVCE_BATISTA_DEMO.mov`
+- **Demo video backup link:** https://drive.google.com/file/d/1B_zX9koiEQngi_JmIXTDf1rL4iaOJt_d/view?usp=sharing
+- **AI disclosure:** `OpenClaw_AI_Disclosure.docx`
+- **Source code:** Python service, dashboard, Electron app, Telegram bot, tests, and docs
+- **APK/SDK:** Not applicable for this submission
+
+GitHub note: `RVCE_BATISTA_DEMO.mov` is a large file and is tracked with Git LFS. The Drive link above is included as a backup for evaluators.
 
 ## Repository Layout
 
@@ -151,7 +180,7 @@ All values in `.env.example` are intentionally blank so the repo can be public. 
 
 ## Run With Docker
 
-Build and start the Python orchestrator and API:
+Build and start the Python orchestrator, API, dashboard, OpenClaw, and Telegram services:
 
 ```powershell
 docker compose up --build
@@ -163,13 +192,13 @@ Open:
 http://localhost:8000
 ```
 
-Run the dashboard dev server profile:
+Health check:
 
-```powershell
-docker compose --profile dev up dashboard
+```text
+GET http://localhost:8000/health
 ```
 
-Run OpenClaw too:
+Run OpenClaw only when needed:
 
 ```powershell
 docker compose --profile openclaw up --build
@@ -216,12 +245,6 @@ npm run build
 cd ..
 ```
 
-Open:
-
-```text
-http://localhost:8000
-```
-
 ## Run The Electron Desktop App
 
 Build the dashboard first:
@@ -255,7 +278,7 @@ cd electron-app
 npm run build:win
 ```
 
-See [docs/PACKAGING_WINDOWS.md](docs/PACKAGING_WINDOWS.md) for packaging notes.
+See [PACKAGING_WINDOWS.md](docs/PACKAGING_WINDOWS.md) for packaging notes.
 
 ## How To Use LobCut
 
@@ -318,6 +341,16 @@ Notes:
 - FFmpeg must be installed for video/caption tests.
 - Gemini live tests require a valid Gemini API key.
 - Docker tests require Docker Desktop to be running.
+
+## AI Disclosure
+
+The product uses AI/ML models at runtime:
+
+- Gemini for semantic classification and context detection.
+- Whisper for speech-to-text transcription.
+- OpenCV and Librosa for local media analysis.
+
+Development-time AI assistance is documented separately in `OpenClaw_AI_Disclosure.docx`.
 
 ## Public Repo Safety Checklist
 

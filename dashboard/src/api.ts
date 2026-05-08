@@ -26,6 +26,9 @@ export type Job = {
   game_genre?: string | null;
   game_title?: string | null;
   video_duration?: number | null;
+  clip_paths?: string | null;
+  reel_path?: string | null;
+  highlight_timestamps?: string | null;
   image_url?: string | null;
   created_at: string;
   updated_at: string;

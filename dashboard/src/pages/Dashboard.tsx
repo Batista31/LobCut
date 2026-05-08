@@ -3,7 +3,7 @@ import { api, type Job, type User } from '../api';
 import { JobDetail } from '../components/JobDetail';
 import { JobsTable } from '../components/JobsTable';
 import { StatsBar } from '../components/StatsBar';
-import { Topbar } from '../components/Topbar';
+import { Topbar } from '../components/TopbarLive';
 import { useJobs } from '../hooks/useJobs';
 import { routeHref } from '../navigation';
 

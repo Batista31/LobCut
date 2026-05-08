@@ -11,7 +11,7 @@ from pipelines.video_pipeline.ffmpeg_utils import probe_video
 log = get_logger(__name__)
 
 
-def run(reel_path: str) -> str | None:
+def run(reel_path: str, words: list[dict] | None = None) -> str | None:
     reel = Path(reel_path)
     if not reel.exists():
         raise CaptionPipelineError(f"Reel not found: {reel}", recoverable=False)
@@ -19,14 +19,14 @@ def run(reel_path: str) -> str | None:
 
     ass_path = None
     try:
-        words = caption_transcriber.transcribe_for_captions(str(reel))
-        if not words:
+        caption_words = words if words is not None else caption_transcriber.transcribe_for_captions(str(reel))
+        if not caption_words:
             update_reel_job(reel_job_id, status="DONE", word_count=0)
             log.info("[CAPTION] No speech detected for %s", reel.name)
             return None
 
         meta = probe_video(reel)
-        ass_content = ass_builder.build_ass(words, int(meta.get("width", 1920)), int(meta.get("height", 1080)), {})
+        ass_content = ass_builder.build_ass(caption_words, int(meta.get("width", 1920)), int(meta.get("height", 1080)), {})
         ass_path = str(reel.with_suffix(".ass"))
         ass_builder.save_ass(ass_content, ass_path)
 
@@ -37,7 +37,7 @@ def run(reel_path: str) -> str | None:
             reel_job_id,
             status="DONE",
             captioned_path=Path(output),
-            word_count=len(words),
+            word_count=len(caption_words),
         )
         log.info("[CAPTION] DONE %s -> %s", reel.name, output)
         return output

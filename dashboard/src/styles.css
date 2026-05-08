@@ -147,21 +147,19 @@ button:active { transform: scale(0.98); }
   gap: 10px;
 }
 .markFrame {
-  width: 36px;
-  height: 36px;
+  width: 42px;
+  height: 42px;
   display: grid;
   place-items: center;
   overflow: hidden;
   background: #000;
   border-radius: 4px;
-  flex: 0 0 36px;
+  flex: 0 0 42px;
 }
 .logoImage {
-  width: 36px;
-  height: 36px;
+  width: 34px;
+  height: 34px;
   object-fit: contain;
-  transform: scale(1.8);
-  transform-origin: center;
 }
 .brandWordmark {
   font-family: 'Bebas Neue', 'Montserrat', system-ui, sans-serif;
@@ -351,9 +349,7 @@ nav a.navActive {
   border-radius: var(--radius-lg);
   overflow: hidden;
 }
-.tableSection {
-  overflow-x: auto;
-}
+.tableSection { overflow: hidden; }
 .tableHeader, .sectionHead {
   display: flex; justify-content: space-between; align-items: center;
   padding: 14px 20px;
@@ -382,7 +378,7 @@ tr { cursor: pointer; transition: background 0.1s; }
 tr:hover { background: var(--surface-raised); }
 tr.selected { background: var(--accent-subtle); }
 
-.jobsTable { table-layout: fixed; min-width: 1428px; }
+.jobsTable { table-layout: fixed; min-width: 0; }
 .pathCell { min-width: 0; }
 .actionCell, .outputCell { overflow: hidden; }
 .actionGroup {
@@ -394,8 +390,8 @@ tr.selected { background: var(--accent-subtle); }
 }
 .compactButton {
   flex: 0 0 auto;
-  min-width: 58px;
-  padding: 5px 10px;
+  min-width: 52px;
+  padding: 5px 8px;
   font-size: 11px; font-weight: 500;
   border-radius: 4px;
 }
@@ -451,8 +447,18 @@ tr.selected { background: var(--accent-subtle); }
 .statusBadge.done { color: var(--success); background: var(--success-subtle); border: 1px solid rgba(52, 211, 153, 0.2); }
 .statusBadge.failed { color: var(--error); background: var(--error-subtle); border: 1px solid rgba(248, 113, 113, 0.2); }
 .statusBadge.processing { color: var(--warning); background: var(--warning-subtle); border: 1px solid rgba(251, 191, 36, 0.2); }
+.statusBadge.active, .statusBadge.running, .statusBadge.queued { color: var(--warning); background: var(--warning-subtle); border: 1px solid rgba(251, 191, 36, 0.2); }
 .statusBadge.pending { color: var(--text-secondary); background: var(--surface-raised); border: 1px solid var(--border); }
 .statusBadge.duplicate { color: #93c5fd; background: rgba(147, 197, 253, 0.08); border: 1px solid rgba(147, 197, 253, 0.2); }
+.jobRowStatus-done td { background: rgba(52, 211, 153, 0.035); }
+.jobRowStatus-failed td { background: rgba(248, 113, 113, 0.055); }
+.jobRowStatus-processing td, .jobRowStatus-pending td, .jobRowStatus-active td, .jobRowStatus-running td, .jobRowStatus-queued td { background: rgba(251, 191, 36, 0.045); }
+.jobRowStatus-done td:first-child { box-shadow: inset 3px 0 0 var(--success); }
+.jobRowStatus-failed td:first-child { box-shadow: inset 3px 0 0 var(--error); }
+.jobRowStatus-processing td:first-child, .jobRowStatus-pending td:first-child, .jobRowStatus-active td:first-child, .jobRowStatus-running td:first-child, .jobRowStatus-queued td:first-child { box-shadow: inset 3px 0 0 var(--warning); }
+.jobRowStatus-done:hover td { background: rgba(52, 211, 153, 0.075); }
+.jobRowStatus-failed:hover td { background: rgba(248, 113, 113, 0.095); }
+.jobRowStatus-processing:hover td, .jobRowStatus-pending:hover td, .jobRowStatus-active:hover td, .jobRowStatus-running:hover td, .jobRowStatus-queued:hover td { background: rgba(251, 191, 36, 0.085); }
 .dangerButton { color: var(--error); border-color: rgba(248, 113, 113, 0.2); }
 .dangerButton:hover { background: var(--error-subtle); }
 
@@ -641,6 +647,13 @@ tr.selected { background: var(--accent-subtle); }
   border: 1px solid var(--border); border-radius: var(--radius-sm);
   background: var(--bg); cursor: pointer; padding: 2px;
 }
+.captionGrid select {
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+}
 .captionToggle {
   display: flex !important;
   align-items: center;
@@ -682,6 +695,7 @@ tr.selected { background: var(--accent-subtle); }
   padding: 14px;
   paint-order: stroke fill;
 }
+.captionActions { padding: 20px; }
 
 /* ── OpenClaw ── */
 .openclawGrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; padding: 20px; }

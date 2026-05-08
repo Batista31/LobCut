@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { api, type User } from '../api';
 import { navigate, routeHref } from '../navigation';
+import { UserAvatar } from './UserAvatar';
 
 type Props = {
   user: User;
@@ -30,19 +31,11 @@ export function Topbar({ user, currentPath }: Props) {
 
       <div className="userBlock">
         <div className="avatarWrapper" onClick={() => setMenuOpen((open) => !open)}>
-          {user.picture ? (
-            <img className="avatarImg" src={user.picture} alt={user.name || 'Profile'} />
-          ) : (
-            <span className="avatarFallback">{(user.name || user.email || 'U')[0].toUpperCase()}</span>
-          )}
+          <UserAvatar user={user} className="avatarImg" fallbackClassName="avatarFallback" />
           {menuOpen && (
             <div className="avatarMenu" onClick={(event) => event.stopPropagation()}>
               <div className="avatarMenuHeader">
-                {user.picture ? (
-                  <img className="avatarMenuImg" src={user.picture} alt="" />
-                ) : (
-                  <span className="avatarMenuFallback">{(user.name || user.email || 'U')[0].toUpperCase()}</span>
-                )}
+                <UserAvatar user={user} className="avatarMenuImg" fallbackClassName="avatarMenuFallback" alt="" />
                 <div>
                   <div className="avatarMenuName">{user.name || 'User'}</div>
                   <div className="avatarMenuEmail">{user.email}</div>

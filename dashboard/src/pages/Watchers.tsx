@@ -1,6 +1,6 @@
 import { FormEvent, useEffect, useState } from 'react';
 import { api, type User, type Watcher } from '../api';
-import { Topbar } from '../components/Topbar';
+import { Topbar } from '../components/TopbarLive';
 
 type LobCutWindow = Window & {
   watcherAPI?: {

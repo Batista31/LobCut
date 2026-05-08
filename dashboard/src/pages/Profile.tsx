@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { api, type User } from '../api';
 import { navigate, routeHref } from '../navigation';
-import { Topbar } from '../components/Topbar';
+import { Topbar } from '../components/TopbarLive';
+import { setStoredAvatar, UserAvatar } from '../components/UserAvatar';
 
 type Props = {
   user: User;
@@ -10,6 +11,7 @@ type Props = {
 export function Profile({ user }: Props) {
   const [displayName, setDisplayName] = useState(user.name || '');
   const [saved, setSaved] = useState(false);
+  const [avatarSaved, setAvatarSaved] = useState(false);
 
   const logout = async () => {
     await api.logout();
@@ -23,6 +25,24 @@ export function Profile({ user }: Props) {
     setTimeout(() => setSaved(false), 3000);
   };
 
+  const handleAvatarChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      setStoredAvatar(String(reader.result || ''));
+      setAvatarSaved(true);
+      setTimeout(() => setAvatarSaved(false), 3000);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const useGoogleAvatar = () => {
+    setStoredAvatar('');
+    setAvatarSaved(true);
+    setTimeout(() => setAvatarSaved(false), 3000);
+  };
+
   return (
     <main className="appShell">
       <Topbar user={user} currentPath="/profile" />
@@ -31,13 +51,7 @@ export function Profile({ user }: Props) {
         {/* Avatar section */}
         <div className="profileCard">
           <div className="profileAvatarSection">
-            {user.picture ? (
-              <img className="profileAvatar" src={user.picture} alt={user.name || 'Profile'} />
-            ) : (
-              <span className="profileAvatarFallback">
-                {(user.name || user.email || 'U')[0].toUpperCase()}
-              </span>
-            )}
+            <UserAvatar user={user} className="profileAvatar" fallbackClassName="profileAvatarFallback" />
             <div className="profileAvatarInfo">
               <h1 className="profileName">{user.name || 'User'}</h1>
               <p className="profileEmail">{user.email}</p>
@@ -69,8 +83,14 @@ export function Profile({ user }: Props) {
               Account ID
               <input value={user.sub} disabled className="profileInputDisabled" />
             </label>
+            <label>
+              Profile Picture
+              <input type="file" accept="image/*" onChange={handleAvatarChange} />
+            </label>
             <div className="profileActions">
               <button type="submit">Save Changes</button>
+              <button type="button" onClick={useGoogleAvatar}>Use Google Picture</button>
+              {avatarSaved && <span className="profileSavedMsg">Profile picture updated</span>}
               {saved && <span className="profileSavedMsg">✓ Changes noted — name is managed by Google</span>}
             </div>
           </form>
