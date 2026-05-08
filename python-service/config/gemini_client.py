@@ -4,8 +4,6 @@ import os
 from pathlib import Path
 from typing import Any
 
-from google import genai
-
 
 _dotenv_loaded = False
 _current_key_index = 0
@@ -66,6 +64,14 @@ def generate_with_fallback(
     mime_type: str | None = None,
 ) -> str:
     global _current_key_index
+
+    try:
+        from google import genai
+    except ImportError as exc:
+        raise RuntimeError(
+            "google-genai is required for Gemini features. Install project dependencies with "
+            "`python -m pip install -r python-service/requirements.txt`."
+        ) from exc
 
     keys = _keys()
     if not keys:

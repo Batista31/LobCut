@@ -7,6 +7,7 @@ import socket
 import sqlite3
 import sys
 import mimetypes
+import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
@@ -24,15 +25,18 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from config.settings import DB_PATH
+from config.settings import DB_PATH, PIPELINE_IMAGE, PIPELINE_VIDEO
 from orchestrator.database import (
     STATUS_DELETED,
     STATUS_PENDING,
+    STATUS_PROCESSING,
     add_watcher,
     delete_watcher,
     get_setting,
     get_job_by_id,
+    get_job_by_source,
     get_user_notification_settings,
+    insert_job,
     init_db,
     list_settings,
     list_jobs_for_dashboard,
@@ -43,7 +47,11 @@ from orchestrator.database import (
     soft_delete_job,
     upsert_setting,
     upsert_user,
+    update_job_status,
 )
+from orchestrator.router import TYPE_IMAGE, TYPE_VIDEO
+from pipelines.image_pipeline import process_job as process_image_job
+from pipelines.video_pipeline.pipeline import process_api_job
 
 VERSION = "1.0.1-preview-stream"
 COOKIE_NAME = "lobcut_token"
@@ -62,12 +70,23 @@ def _required_env(name: str) -> str:
     return value
 
 
-JWT_SECRET = _required_env("JWT_SECRET")
-if not re.fullmatch(r"[0-9a-fA-F]{32,}", JWT_SECRET):
-    raise RuntimeError("JWT_SECRET must be at least 32 hex characters.")
+AUTH_MODE = os.environ.get("LOBCUT_AUTH_MODE", "").strip().lower()
+if not AUTH_MODE:
+    AUTH_MODE = "google" if os.environ.get("GOOGLE_CLIENT_ID") and os.environ.get("GOOGLE_CLIENT_SECRET") else "local"
 
-GOOGLE_CLIENT_ID = _required_env("GOOGLE_CLIENT_ID")
-GOOGLE_CLIENT_SECRET = _required_env("GOOGLE_CLIENT_SECRET")
+JWT_SECRET = os.environ.get("JWT_SECRET", "").strip()
+if AUTH_MODE == "google":
+    JWT_SECRET = _required_env("JWT_SECRET")
+    if not re.fullmatch(r"[0-9a-fA-F]{32,}", JWT_SECRET):
+        raise RuntimeError("JWT_SECRET must be at least 32 hex characters.")
+else:
+    JWT_SECRET = JWT_SECRET or "0" * 32
+
+GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", "").strip()
+GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET", "").strip()
+if AUTH_MODE == "google":
+    GOOGLE_CLIENT_ID = _required_env("GOOGLE_CLIENT_ID")
+    GOOGLE_CLIENT_SECRET = _required_env("GOOGLE_CLIENT_SECRET")
 REDIRECT_URI = os.environ.get("GOOGLE_REDIRECT_URI", "http://localhost:8000/auth/callback")
 DASHBOARD_URL = os.environ.get("DASHBOARD_URL", "http://localhost:3000")
 CORS_ORIGINS = [
@@ -161,6 +180,10 @@ class TelegramDirectTestOut(BaseModel):
     error: Optional[str] = None
 
 
+class ProcessIn(BaseModel):
+    file_path: str = Field(min_length=1)
+
+
 def _row_to_dict(row) -> dict:
     return dict(row) if row is not None else {}
 
@@ -221,7 +244,9 @@ def _job_out(row) -> JobOut:
 
 def _resolve_media_path(raw_path: str) -> Path:
     path_text = str(raw_path or "")
-    if path_text.startswith("/app/"):
+    if path_text.startswith("/app/python-service/"):
+        path = ROOT / path_text.removeprefix("/app/python-service/")
+    elif path_text.startswith("/app/"):
         path = ROOT / path_text.removeprefix("/app/")
     else:
         path = Path(path_text)
@@ -286,6 +311,8 @@ def _create_token(user: dict) -> str:
 
 
 async def get_current_user(request: Request) -> dict:
+    if AUTH_MODE == "local":
+        return {"sub": "local", "email": None, "name": "Local", "picture": None}
     token = request.cookies.get(COOKIE_NAME)
     if not token:
         raise HTTPException(status_code=401, detail="Authentication required.")
@@ -334,6 +361,19 @@ def health() -> dict[str, str]:
 
 @app.get("/auth/login")
 def auth_login() -> Response:
+    if AUTH_MODE == "local":
+        user = {"sub": "local", "email": None, "name": "Local", "picture": None}
+        response = RedirectResponse(DASHBOARD_URL)
+        response.set_cookie(
+            COOKIE_NAME,
+            _create_token(user),
+            httponly=True,
+            secure=False,
+            samesite="lax",
+            max_age=JWT_EXPIRY_DAYS * 24 * 60 * 60,
+        )
+        return response
+
     state = secrets.token_urlsafe(24)
     params = {
         "client_id": GOOGLE_CLIENT_ID,
@@ -400,8 +440,83 @@ async def auth_callback(request: Request, code: str, state: str) -> Response:
 
 
 @app.get("/auth/me")
-async def auth_me(user: dict = Depends(get_current_user)) -> dict:
+async def auth_me(user: dict = Depends(get_optional_user)) -> dict:
     return user
+
+
+def _validate_process_source(file_path: str) -> Path:
+    source = Path(file_path).expanduser().resolve()
+    if not source.exists() or not source.is_file():
+        raise HTTPException(status_code=404, detail="File not found.")
+    return source
+
+
+def _tags_as_list(value: Optional[str]) -> list[str]:
+    if not value:
+        return []
+    try:
+        parsed = json.loads(value)
+        if isinstance(parsed, list):
+            return [str(item) for item in parsed]
+    except Exception:
+        pass
+    return [item.strip() for item in value.split(",") if item.strip()]
+
+
+@app.post("/process/image")
+def process_image(body: ProcessIn, user: dict = Depends(get_optional_user)) -> dict:
+    source = _validate_process_source(body.file_path)
+    job_id = insert_job(source, TYPE_IMAGE, PIPELINE_IMAGE, user_id=user["sub"])
+    if job_id is None:
+        row = get_job_by_source(source, user_id=user["sub"]) or get_job_by_source(source, user_id="local")
+        if row is None:
+            raise HTTPException(status_code=409, detail="File is already queued or processed.")
+        job_id = int(row["id"])
+    row = get_job_by_id(job_id)
+    if row is None:
+        raise HTTPException(status_code=500, detail="Job was created but could not be loaded.")
+
+    update_job_status(job_id, STATUS_PROCESSING)
+    process_image_job(row)
+    updated = get_job_by_id(job_id)
+    if updated is None:
+        raise HTTPException(status_code=500, detail="Job disappeared after processing.")
+
+    return {
+        "job_id": str(job_id),
+        "file": updated["filename"],
+        "type": "image",
+        "category": updated["ai_category"],
+        "tags": _tags_as_list(updated["ai_tags"]),
+        "summary": updated["ai_summary"],
+        "blur_score": updated["blur_score"],
+        "is_blurry": updated["ai_category"] == "blurry",
+        "classifier": updated["classifier"],
+        "status": updated["status"],
+    }
+
+
+@app.post("/process/video")
+def process_video(body: ProcessIn, user: dict = Depends(get_optional_user)) -> dict:
+    source = _validate_process_source(body.file_path)
+    job_id = insert_job(source, TYPE_VIDEO, PIPELINE_VIDEO, user_id=user["sub"])
+    if job_id is None:
+        row = get_job_by_source(source, user_id=user["sub"]) or get_job_by_source(source, user_id="local")
+        if row is None:
+            raise HTTPException(status_code=409, detail="File is already queued or processed.")
+        job_id = int(row["id"])
+
+    result = process_api_job(job_id, str(source))
+    return {
+        "job_id": str(job_id),
+        "file": source.name,
+        "type": "video",
+        "transcript": result.get("transcript", ""),
+        "summary": result.get("summary", ""),
+        "subtitle_path": result.get("subtitle_path"),
+        "duration_seconds": result.get("duration_seconds", 0),
+        "output_path": result.get("output_path"),
+    }
 
 
 @app.post("/auth/logout")

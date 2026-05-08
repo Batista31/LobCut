@@ -1,306 +1,379 @@
 # LobCut
 
-LobCut is a local autonomous media processing agent written in Python.
+LobCut is a local AI media-processing workstation for creators, editors, and gaming clip makers. It watches folders, processes images and videos, builds highlight clips and reels, records every job in SQLite, and exposes a local dashboard plus optional Telegram notifications.
 
-Right now, the project is focused on two things:
+The project is designed to run locally for privacy and hackathon review. Heavy media work happens in the Python service with OpenCV, Gemini, Whisper, FFmpeg, and SQLite. The dashboard is a React/Vite app served by FastAPI or opened through the Electron desktop wrapper.
 
-- watching local folders for new media
-- classifying incoming images automatically
+## What LobCut Does
 
-The current image pipeline uses a hybrid approach:
+- Watches local folders for incoming images and videos.
+- Classifies images with local blur detection plus Gemini image understanding.
+- Routes images into organized output folders such as `blurry`, `people`, `wildlife`, `landscape`, `vehicle`, or `other`.
+- Transcribes videos with Whisper.
+- Detects candidate highlight moments from audio/transcript/game context.
+- Exports short clips, subtitles, and highlight reels.
+- Stores jobs, statuses, metadata, watchers, and settings in SQLite.
+- Shows jobs, previews, outputs, watch folders, Telegram settings, and OpenClaw status in the dashboard.
+- Sends optional Telegram notifications for queued, processing, completed, and failed jobs.
+- Provides API endpoints for direct file processing and dashboard operations.
 
-- blur detection runs locally with OpenCV
-- semantic image classification runs through the Gemini API
-
-LobCut then routes the file into the correct output folder and records the full job in SQLite.
-
-## Current Status
-
-Phase 0 and Phase 1 are complete and working.
-
-Phase 2 is now implemented and working for images.
-
-What that means today:
-
-- new files dropped into `input/images/` are detected automatically
-- file stability checks prevent half-written file processing
-- duplicate source files are ignored
-- every job is tracked in `orchestrator/jobs.db`
-- blurry images are detected locally
-- non-blurry images are classified through Gemini
-- classified files are moved into AI-driven output folders like:
-  - `output/images/blurry/`
-  - `output/images/people/`
-  - `output/images/wildlife/`
-  - `output/images/landscape/`
-  - `output/images/portrait/`
-  - or any other category returned by the model
-
-## How It Works
-
-### 1. Watcher
-
-`orchestrator/watcher.py` monitors:
-
-- `input/images/`
-- `input/videos/`
-
-When a new file appears:
-
-- LobCut waits for the file to stop changing
-- classifies it as `IMAGE`, `VIDEO`, or `UNKNOWN`
-- creates a DB row
-- routes it to the correct pipeline
-
-### 2. Database
-
-`orchestrator/database.py` is the source of truth for job tracking.
-
-Each job stores:
-
-- file name
-- source path
-- detected type
-- pipeline
-- status
-- output path
-- error details
-- image analysis metadata
-
-The image pipeline now also stores:
-
-- `ai_category`
-- `ai_tags`
-- `ai_summary`
-- `blur_score`
-- `classifier`
-
-### 3. Image Pipeline
-
-`pipelines/image_pipeline/pipeline.py` does the following:
-
-1. copies the source image to `temp/`
-2. computes a local blur score using Laplacian variance
-3. if blurry, routes to `output/images/blurry/`
-4. if clear, sends the temp copy to Gemini for semantic classification
-5. receives structured JSON back from Gemini
-6. resolves the destination folder through `PathResolver`
-7. moves the temp copy into the final output folder
-8. updates the SQLite job row to `DONE` or `FAILED`
-
-### 4. Gemini Integration
-
-Gemini is used only for semantic understanding.
-
-Examples:
-
-- wildlife
-- people
-- portrait
-- landscape
-- document
-- screenshot
-- food
-- architecture
-- product
-
-The API key is loaded from the local `.env` file and is not committed to git.
-
-## Project Structure
+## Repository Layout
 
 ```text
 LobCut/
-|-- README.md
-|-- main.py
-|-- requirements.txt
-|-- .env.example
-|-- config/
-|-- dashboard/
-|-- docs/
-|-- orchestrator/
-|-- pipelines/
+|-- main.py                         # watcher/orchestrator entrypoint
+|-- docker-compose.yml              # orchestrator, API, dashboard, OpenClaw, Telegram bot
+|-- Dockerfile                      # watcher/orchestrator image
+|-- Dockerfile.api                  # FastAPI image
+|-- requirements.txt                # root/orchestrator Python dependencies
 |-- python-service/
-|-- tests/
-|-- input/
-|-- output/
-|-- temp/
-`-- logs/
+|   |-- app.py                      # FastAPI API and dashboard server
+|   |-- config/                     # settings, logging, Gemini helper, paths
+|   |-- orchestrator/               # SQLite, watcher, routing
+|   `-- pipelines/                  # image, video, caption pipelines
+|-- dashboard/                      # React/Vite dashboard
+|-- electron-app/                   # desktop wrapper and Windows packaging
+|-- telegram-bot/                   # optional Telegram job monitor
+|-- openclaw-workspace/             # OpenClaw runtime workspace
+|-- openclaw-skill/                 # packaged LobCut skill notes/memory
+|-- skills/media-processor/         # local media dispatch skill
+|-- docs/                           # setup and architecture notes
+|-- tests/                          # smoke/acceptance tests
+|-- input/                          # local input media, ignored by git
+|-- output/                         # generated media, ignored by git
+|-- data/                           # SQLite DB/settings, ignored by git
+|-- logs/                           # logs, ignored by git
+`-- temp/                           # temp/quarantine files, ignored by git
 ```
 
-## Setup
+## API Overview
 
-Install dependencies:
+Default local API URL: `http://localhost:8000`
+
+| Method | Endpoint | Purpose |
+| --- | --- | --- |
+| `GET` | `/health` | Health and database check |
+| `POST` | `/process/image` | Process one image immediately |
+| `POST` | `/process/video` | Process one video immediately |
+| `GET` | `/jobs` | List recent jobs |
+| `GET` | `/jobs/{id}` | Get one job |
+| `GET` | `/jobs/{id}/image` | Stream image preview/output |
+| `GET` | `/jobs/{id}/download` | Download job output |
+| `POST` | `/jobs/retry/{id}` | Retry a job |
+| `DELETE` | `/jobs/{id}` | Soft-delete a job |
+| `GET/POST` | `/watchers` | List or add watch folders |
+| `PATCH/DELETE` | `/watchers/{id}` | Enable/disable/remove watchers |
+| `GET/POST` | `/settings` | Read/write simple settings |
+| `GET/PUT` | `/settings/captions` | Read/write caption style settings |
+| `POST` | `/telegram/test` | Send a direct Telegram test notification |
+| `GET` | `/openclaw/status` | OpenClaw service/status summary |
+
+Direct image request:
+
+```json
+{
+  "file_path": "C:/absolute/path/to/image.jpg"
+}
+```
+
+Direct video request:
+
+```json
+{
+  "file_path": "C:/absolute/path/to/video.mp4"
+}
+```
+
+## Prerequisites
+
+Required:
+
+- Git
+- Python 3.10 or newer
+- Node.js 20 or newer
+- FFmpeg available on `PATH`
+
+Recommended:
+
+- Docker Desktop for the easiest full-stack run
+- A Gemini API key for semantic image/game classification
+- A Telegram bot token if you want notifications
+- Google OAuth credentials only if you want dashboard login instead of local mode
+
+## Fresh Clone Setup
+
+Clone the repository:
 
 ```powershell
-py -m pip install -r requirements.txt
+git clone https://github.com/Batista31/LobCut.git
+cd LobCut
 ```
 
-Create a local `.env` file:
+Create local runtime folders:
+
+```powershell
+mkdir input, output, data, logs, temp -ErrorAction SilentlyContinue
+mkdir input\images, input\videos -ErrorAction SilentlyContinue
+```
+
+Create your private environment file:
+
+```powershell
+copy .env.example .env
+```
+
+Edit `.env`. For the simplest local demo, use local auth and fill a Gemini key:
 
 ```env
-GEMINI_API_KEY=your_real_gemini_api_key_here
+LOBCUT_AUTH_MODE=local
+GEMINI_API_KEY=your_gemini_key_here
 ```
 
-You can copy the shape from `.env.example`.
+All values in `.env.example` are intentionally blank so the repo can be public. Do not commit `.env`.
 
-## Run LobCut
+## Environment Variables
 
-Start the watcher:
-
-```powershell
-py main.py
-```
-
-Then drop images into:
-
-```text
-input/images/
-```
+| Variable | Required | Notes |
+| --- | --- | --- |
+| `LOBCUT_AUTH_MODE` | Recommended | Use `local` for demos; use `google` for OAuth login |
+| `GEMINI_API_KEY` | Recommended | Primary Gemini key for image/game classification |
+| `GEMINI_API_KEY_2` | Optional | Backup key used if quota is hit |
+| `GEMINI_API_KEY_3` | Optional | Second backup key |
+| `OPENAI_API_KEY` | Optional | Passed to OpenClaw if used |
+| `TELEGRAM_BOT_TOKEN` | Optional | Enables Telegram notifications |
+| `TELEGRAM_CHAT_ID` | Optional | Fallback chat ID for the Telegram bot |
+| `GOOGLE_CLIENT_ID` | OAuth only | Required when `LOBCUT_AUTH_MODE=google` |
+| `GOOGLE_CLIENT_SECRET` | OAuth only | Required when `LOBCUT_AUTH_MODE=google` |
+| `JWT_SECRET` | OAuth only | At least 32 hex characters |
+| `WATCH_HOST_INPUT` | Optional | Docker bind mount override for watched folders |
+| `WATCH_PATH_MAPPINGS` | Optional | Host-to-container path mapping for Docker watchers |
+| `OPENCLAW_GATEWAY_TOKEN` | Optional | Reserved for OpenClaw gateway setups |
 
 ## Run With Docker
+
+Build and start the Python orchestrator and API:
 
 ```powershell
 docker compose up --build
 ```
 
-For dashboard development:
+Open:
+
+```text
+http://localhost:8000
+```
+
+Run the dashboard dev server profile:
 
 ```powershell
 docker compose --profile dev up dashboard
 ```
 
-## Electron Desktop App
+Run OpenClaw too:
 
-Install the Electron wrapper dependencies:
+```powershell
+docker compose --profile openclaw up --build
+```
+
+Run the Telegram bot service:
+
+```powershell
+docker compose up --build telegram-bot
+```
+
+## Run Without Docker
+
+Install Python dependencies:
+
+```powershell
+py -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install -r python-service\requirements.txt
+python -m pip install -r requirements.txt
+```
+
+Start the watcher/orchestrator:
+
+```powershell
+$env:PYTHONPATH="python-service"
+python main.py
+```
+
+Start the API/dashboard server in a second terminal:
+
+```powershell
+$env:PYTHONPATH="python-service"
+uvicorn app:app --app-dir python-service --host 0.0.0.0 --port 8000
+```
+
+Build the dashboard:
+
+```powershell
+cd dashboard
+npm ci
+npm run build
+cd ..
+```
+
+Open:
+
+```text
+http://localhost:8000
+```
+
+## Run The Electron Desktop App
+
+Build the dashboard first:
+
+```powershell
+cd dashboard
+npm ci
+npm run build
+cd ..
+```
+
+Install Electron dependencies and start:
 
 ```powershell
 cd electron-app
-npm install
-```
-
-Run the desktop app in development:
-
-```powershell
+npm ci
 npm start
 ```
 
-To use the desktop shell with services you already started locally, skip Docker:
+To use a backend you already started manually:
 
 ```powershell
 $env:LOBCUT_SKIP_DOCKER="1"
 npm start
 ```
 
-The app starts `docker compose up -d` from the project root, waits for
-`http://localhost:8000/health`, and then opens the local dashboard file. Docker
-output is written to `~/lobcut-logs/docker.log`.
-
-Build distributables:
+Package for Windows:
 
 ```powershell
+cd electron-app
+npm run build:win
+```
+
+See [docs/PACKAGING_WINDOWS.md](docs/PACKAGING_WINDOWS.md) for packaging notes.
+
+## How To Use LobCut
+
+1. Start the services using Docker, local Python, or Electron.
+2. Open the dashboard at `http://localhost:8000`.
+3. Add watch folders on the Watchers page, or use the default folders:
+   - `input/images`
+   - `input/videos`
+4. Drop image or video files into a watched folder.
+5. Watch jobs appear in the dashboard.
+6. Open outputs from the job table or inspect details in the job modal.
+
+Outputs are written under:
+
+```text
+output/images/
+output/videos/clips/
+output/videos/reels/
+```
+
+Unknown files are quarantined under:
+
+```text
+temp/quarantine/
+```
+
+## Tests And Verification
+
+Run lightweight tests:
+
+```powershell
+$env:PYTHONPATH="python-service"
+python -m pytest tests -q
+```
+
+Run the Phase 1 watcher test:
+
+```powershell
+$env:PYTHONPATH="python-service"
+python tests\test_phase1.py --self-contained
+```
+
+Run the mocked image pipeline test:
+
+```powershell
+$env:PYTHONPATH="python-service"
+python tests\test_phase2.py --self-contained
+```
+
+Run dashboard build verification:
+
+```powershell
+cd dashboard
+npm ci
 npm run build
 ```
 
-The builder is configured for macOS `.dmg`, Linux `.AppImage`, and Windows
-`nsis` targets.
+Notes:
 
-## Test Scripts
+- FFmpeg must be installed for video/caption tests.
+- Gemini live tests require a valid Gemini API key.
+- Docker tests require Docker Desktop to be running.
 
-### Phase 1 test
+## Public Repo Safety Checklist
 
-```powershell
-py tests\test_phase1.py --self-contained
-```
+Before sharing with judges:
 
-### Phase 2 mocked test
+- Confirm `.env` is not committed.
+- Keep `data/jobs.db`, `input/`, `output/`, `logs/`, `temp/`, `node_modules/`, and build artifacts out of git.
+- Use `.env.example` only for blank variable names.
+- Remove private media if you plan to include sample assets.
+- Run `git status --short --ignored` and review anything unexpected.
 
-This validates the full image pipeline flow without real Gemini calls:
+## Troubleshooting
 
-```powershell
-py tests\test_phase2.py --self-contained
-```
+Backend does not start:
 
-### Live Gemini smoke test
+- Check `.env`.
+- For easiest local use, set `LOBCUT_AUTH_MODE=local`.
+- Install dependencies with `python -m pip install -r python-service/requirements.txt`.
 
-This tests one real image against Gemini:
+Dashboard shows login only:
 
-```powershell
-py tests\test_gemini_image.py "D:\path\to\image.png"
-```
+- If you want local mode, set `LOBCUT_AUTH_MODE=local` and restart the API.
+- If you want Google login, configure `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and `JWT_SECRET`.
 
-## Security Notes
+Gemini errors:
 
-- `.env` is ignored by git
-- local runtime media is ignored by git
-- logs, temp files, and the SQLite DB are ignored by git
-- if an API key is ever exposed, revoke it and generate a fresh one
+- Set `GEMINI_API_KEY`.
+- Add `GEMINI_API_KEY_2` and `GEMINI_API_KEY_3` for quota fallback.
+- If quota is exhausted, jobs may wait in `output/images/unclassified`.
 
-## What Has Been Completed
+Video or caption errors:
 
-### Phase 0
+- Install FFmpeg and ensure `ffmpeg` is available on `PATH`.
+- Whisper may download model files on first run.
 
-- base folder structure
-- configuration layout
-- logger
-- database bootstrap
+Docker errors on Windows:
 
-### Phase 1
+- Start Docker Desktop first.
+- Run the terminal with permissions that can access the Docker engine.
 
-- watcher
-- router
-- file stability checks
-- quarantine handling
-- duplicate protection
-- DB-backed job tracking
+Node/Vite `spawn EPERM` on Windows:
 
-### Phase 2
+- Retry in an elevated terminal.
+- Ensure antivirus or Controlled Folder Access is not blocking `node_modules/.bin/esbuild`.
 
-- local blur detection
-- Gemini semantic image classification
-- AI-driven category folders
-- `.env`-based key loading
-- retry and fallback behavior for model requests
-- mocked and live test scripts
+## Current Hackathon Scope
 
-## What Is Left
+The core submission demonstrates:
 
-### Near-term polish
+- local autonomous media intake,
+- image classification and routing,
+- video transcription and clip/reel generation,
+- dashboard-based monitoring,
+- watch-folder management,
+- Telegram notification integration,
+- OpenClaw status integration,
+- Docker and Electron packaging paths.
 
-- reduce noisy HTTP debug logs
-- add cleaner startup diagnostics for Gemini readiness
-- improve user-facing error messages for quota or API failures
-- decide whether some categories should collapse into simpler folders
-  - for example, `portrait` -> `people`
-
-### Phase 3
-
-Video pipeline:
-
-- transcription
-- subtitle generation
-- subtitle burn-in
-- output to `output/videos/`
-
-### Phase 4
-
-Clip intelligence:
-
-- highlight detection
-- silence gap trimming
-- keyword-triggered clip extraction
-
-## Summary
-
-LobCut is no longer just a folder watcher.
-
-It is now a working local agent that:
-
-- monitors incoming media
-- classifies images intelligently
-- separates blurry images locally
-- uses Gemini for semantic understanding
-- organizes files into output folders
-- tracks every step in SQLite
-
-The image side is live.
-The next major milestone is the video pipeline.
+Some AI features depend on external API keys and quota. The project is built to degrade safely by recording failures in job status rather than silently dropping files.

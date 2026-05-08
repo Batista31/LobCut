@@ -64,7 +64,7 @@ services:
       - ./input:/watch/input:ro
       - openclaw-data:/root/.openclaw
     environment:
-      - OPENAI_API_KEY=${OPENAI_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
       - TELEGRAM_ALLOWED_USER_ID=${TELEGRAM_ALLOWED_USER_ID}
       - MEDIA_SERVICE_URL=http://api:8000
