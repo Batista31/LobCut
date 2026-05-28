@@ -91,8 +91,16 @@ def build_ass(words: list[dict], video_width: int, video_height: int, style_conf
     for group in group_words_into_lines(words, max_words):
         full_group = [w["word"] for w in group]
         for idx, active in enumerate(group):
-            start = seconds_to_ass_time(active["start"])
-            end = seconds_to_ass_time(active["end"])
+            start_sec = float(active["start"])
+            # Clamp end to next word's start to prevent overlapping dialogue events
+            if idx < len(group) - 1:
+                end_sec = float(group[idx + 1]["start"])
+            else:
+                end_sec = float(active["end"])
+            if end_sec <= start_sec:
+                end_sec = start_sec + 0.05
+            start = seconds_to_ass_time(start_sec)
+            end = seconds_to_ass_time(end_sec)
             if style_mode == "word_by_word":
                 text = f"{{\\c{highlight}}}{active['word']}"
             elif style_mode == "block":

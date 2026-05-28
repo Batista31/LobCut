@@ -1,1 +1,1 @@
-export { Settings } from './SettingsLive';
+export { CaptionSettingsPage as Settings } from './CaptionSettingsPage';

@@ -1,1 +1,13 @@
-*.mov filter=lfs diff=lfs merge=lfs -text
+# Normalize line endings for text files
+* text=auto
+
+# Treat these as binary to avoid line-ending issues
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.gif binary
+*.ico binary
+*.mov binary
+*.mp4 binary
+*.db binary

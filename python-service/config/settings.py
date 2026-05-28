@@ -128,17 +128,27 @@ MAX_REEL_CLIPS = 5
 FRAME_SAMPLE_INTERVAL_SEC = 30
 
 VIDEO_GENRES = (
+    # Video games
     "fps",
     "battle_royale",
     "moba",
     "rpg",
     "survival",
     "sandbox",
-    "sports",
     "racing",
     "strategy",
     "fighting",
     "puzzle",
+    "esports",
+    # Real sports
+    "football",
+    "cricket",
+    "basketball",
+    "tennis",
+    "sports",       # generic sports fallback
+    # General content
+    "commentary",
+    "vlog",
     "unknown",
 )
 
@@ -179,3 +189,12 @@ CAPTION_MAX_WORDS_PER_LINE = 4
 CAPTION_OUTLINE = True
 CAPTION_SHADOW = True
 CAPTION_CRF = 18
+
+# --------------------------------
+# TIER LIMITS
+# --------------------------------
+FREE_TIER_JOBS_PER_WEEK = int(os.environ.get("FREE_TIER_JOBS_PER_WEEK", "10"))
+MAX_UPLOAD_MB_FREE = int(os.environ.get("MAX_UPLOAD_MB_FREE", "500"))
+MAX_UPLOAD_MB_PRO  = int(os.environ.get("MAX_UPLOAD_MB_PRO", "2000"))
+STUCK_JOB_TIMEOUT_MINUTES = int(os.environ.get("STUCK_JOB_TIMEOUT_MINUTES", "45"))
+HTTPS_ONLY = bool(os.environ.get("LOBCUT_HTTPS", ""))

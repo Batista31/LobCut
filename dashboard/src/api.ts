@@ -1,4 +1,4 @@
-const BASE = 'http://localhost:8000';
+const BASE = (import.meta as { env?: { VITE_API_BASE?: string } }).env?.VITE_API_BASE ?? 'http://localhost:8000';
 
 export type User = {
   sub: string;
@@ -67,24 +67,42 @@ export type OpenClawStatus = {
   config: Record<string, unknown>;
 };
 
+export type UsageInfo = {
+  tier: 'free' | 'pro';
+  jobs_this_week: number;
+  jobs_limit: number | null;
+  jobs_remaining: number | null;
+  max_upload_mb: number;
+};
+
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
     ...init,
     credentials: 'include',
   });
   if (res.status === 401) {
-    throw new Error('Unauthorized');
+    window.location.hash = '#/login';
+    throw new Error('Session expired. Please sign in again.');
   }
   if (!res.ok) {
-    const body = await res.text();
-    throw new Error(body || `Request failed: ${res.status}`);
+    let message = `Request failed: ${res.status}`;
+    try {
+      const body = await res.json() as { detail?: string };
+      if (body.detail) message = body.detail;
+    } catch {
+      const text = await res.text().catch(() => '');
+      if (text) message = text;
+    }
+    throw new Error(message);
   }
   return res.json() as Promise<T>;
 }
 
 export const api = {
   me: () => apiFetch<User>('/auth/me'),
-  jobs: () => apiFetch<Job[]>('/jobs'),
+  usage: () => apiFetch<UsageInfo>('/auth/me/usage'),
+  upgrade: () => apiFetch<{ tier: string; status: string }>('/auth/upgrade', { method: 'POST' }),
+  jobs: (limit = 50, offset = 0) => apiFetch<Job[]>(`/jobs?limit=${limit}&offset=${offset}`),
   job: (id: number) => apiFetch<Job>(`/jobs/${id}`),
   retryJob: (id: number) => apiFetch<{ status: string }>(`/jobs/retry/${id}`, { method: 'POST' }),
   deleteJob: (id: number) => apiFetch<{ deleted: boolean; job_id: number }>(`/jobs/${id}`, { method: 'DELETE' }),
@@ -128,4 +146,45 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     }),
+
+  updateJobMeta: (id: number, body: { game_genre?: string; game_title?: string; ai_tags?: string }) =>
+    apiFetch<Job>(`/jobs/${id}/meta`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }),
+
+  rebuildReel: (
+    id: number,
+    clipPaths: string[],
+    customRanges?: { start: number; end: number }[],
+  ) =>
+    apiFetch<{ status: string; job_id: number }>(`/jobs/${id}/rebuild-reel`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        clip_paths: clipPaths,
+        custom_ranges: customRanges ?? [],
+      }),
+    }),
+
+  jobVideoUrl: (id: number) => `${BASE}/jobs/${id}/video`,
+
+  // ── Workstation: file upload ──────────────────────────────────
+  uploadFile: (file: File, action: string = 'subtitles') => {
+    const form = new FormData();
+    form.append('file', file);
+    form.append('action', action);
+    return fetch(`${BASE}/upload`, {
+      method: 'POST',
+      credentials: 'include',
+      body: form,
+    }).then(async (res) => {
+      if (!res.ok) {
+        const body = await res.text();
+        throw new Error(body || `Upload failed: ${res.status}`);
+      }
+      return res.json() as Promise<{ job_id: number; status: string; type: string }>;
+    });
+  },
 };

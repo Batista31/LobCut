@@ -33,6 +33,7 @@ function copyDashboardAssets() {
     const assets = [
       { src: path.join(projectRoot, 'LobCut mark.jpeg'), filename: 'lobcut-mark.jpeg' },
       { src: path.join(projectRoot, 'LobCut mark.png'), filename: 'lobcut-mark.png' },
+      { src: path.join(projectRoot, 'LobCut mark light theme.png'), filename: 'lobcut-mark-light.png' },
       { src: path.join(projectRoot, 'LobCut telegram.png'), filename: 'lobcut-telegram.png' },
     ];
     const assetDirs = [

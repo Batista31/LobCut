@@ -295,13 +295,15 @@ def run(job_id, source_path):
         if GEMINI_RERANK_CLIPS:
             _ = clip_ranker.rerank_clips_with_gemini(clip_paths, game_genre)
 
-        # Generate SRTs alongside clips
+        # Generate clip SRTs temporarily (used as caption fallback; deleted after reel is captioned)
+        clip_srt_paths: list[Path] = []
         for item in exported:
             clip_path = item["clip_path"]
             moment = item["moment"]
             clip_file = Path(clip_path)
             clip_srt = clip_file.with_suffix(".srt")
             subtitler.clip_srt(transcript, float(moment["clip_start"]), float(moment["clip_end"]), str(clip_srt))
+            clip_srt_paths.append(clip_srt)
             if BURN_SUBTITLES:
                 burned = clip_file.with_name(f"{clip_file.stem}_subbed{clip_file.suffix}")
                 try:
@@ -334,6 +336,9 @@ def run(job_id, source_path):
                         f"Captioned reel was not created for {Path(reel_path).name}",
                         recoverable=True,
                     )
+            # Remove temporary clip SRTs — reels get burned-in captions; no loose .srt files
+            for srt in clip_srt_paths:
+                srt.unlink(missing_ok=True)
 
         final_output_path = Path(captioned_reel_path or reel_path or clip_paths[0])
 
@@ -344,7 +349,13 @@ def run(job_id, source_path):
             clip_paths=json.dumps(clip_paths),
             highlight_timestamps=json.dumps(
                 [
-                    {"timestamp": m["timestamp"], "score": m["score"], "source": m.get("source", "audio")}
+                    {
+                        "timestamp": m["timestamp"],
+                        "score": m["score"],
+                        "source": m.get("source", "audio"),
+                        "clip_start": m.get("clip_start", 0.0),
+                        "clip_end": m.get("clip_end", 0.0),
+                    }
                     for m in exported_moments
                 ]
             ),

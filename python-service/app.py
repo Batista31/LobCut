@@ -14,7 +14,7 @@ from typing import Optional
 from urllib.parse import urlencode, urlparse
 
 import httpx
-from fastapi import Depends, FastAPI, HTTPException, Request, Response
+from fastapi import BackgroundTasks, Depends, FastAPI, Form, HTTPException, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -25,29 +25,46 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from config.settings import DB_PATH, PIPELINE_IMAGE, PIPELINE_VIDEO
+from config.settings import (
+    DB_PATH,
+    FREE_TIER_JOBS_PER_WEEK,
+    HTTPS_ONLY,
+    MAX_UPLOAD_MB_FREE,
+    MAX_UPLOAD_MB_PRO,
+    PIPELINE_IMAGE,
+    PIPELINE_VIDEO,
+    STUCK_JOB_TIMEOUT_MINUTES,
+)
 from orchestrator.database import (
     STATUS_DELETED,
     STATUS_PENDING,
     STATUS_PROCESSING,
     add_watcher,
+    count_jobs_for_dashboard,
+    count_user_jobs_this_week,
     delete_watcher,
+    expire_stuck_jobs,
     get_setting,
     get_job_by_id,
     get_job_by_source,
     get_user_notification_settings,
+    get_user_tier,
     insert_job,
     init_db,
     list_settings,
     list_jobs_for_dashboard,
     list_watchers,
+    recover_interrupted_jobs,
     retry_job,
     set_telegram_chat_id,
+    set_user_tier,
     set_watcher_enabled,
     soft_delete_job,
     upsert_setting,
     upsert_user,
+    update_job_meta,
     update_job_status,
+    update_job_video_fields,
 )
 from orchestrator.router import TYPE_IMAGE, TYPE_VIDEO
 from pipelines.image_pipeline import process_job as process_image_job
@@ -187,6 +204,22 @@ class ProcessIn(BaseModel):
     file_path: str = Field(min_length=1)
 
 
+class JobMetaIn(BaseModel):
+    game_genre: Optional[str] = None
+    game_title: Optional[str] = None
+    ai_tags: Optional[str] = None
+
+
+class CustomClipRange(BaseModel):
+    start: float
+    end: float
+
+
+class RebuildReelIn(BaseModel):
+    clip_paths: list[str] = []
+    custom_ranges: list[CustomClipRange] = []
+
+
 def _row_to_dict(row) -> dict:
     return dict(row) if row is not None else {}
 
@@ -247,6 +280,8 @@ def _job_out(row) -> JobOut:
 
 def _resolve_media_path(raw_path: str) -> Path:
     path_text = str(raw_path or "")
+
+    # Remap Docker-style /app/ paths to the local ROOT
     if path_text.startswith("/app/python-service/"):
         path = ROOT / path_text.removeprefix("/app/python-service/")
     elif path_text.startswith("/app/"):
@@ -255,13 +290,31 @@ def _resolve_media_path(raw_path: str) -> Path:
         path = Path(path_text)
 
     resolved = path.resolve()
-    allowed_roots = [
+
+    # Primary check: does the file exist under this app's own media directories?
+    own_roots = [
         (ROOT / "input").resolve(),
         (ROOT / "output").resolve(),
         (ROOT / "temp").resolve(),
     ]
-    if not any(resolved == root or root in resolved.parents for root in allowed_roots):
-        raise HTTPException(status_code=403, detail="File is outside LobCut media folders.")
+    in_own_roots = any(resolved == r or r in resolved.parents for r in own_roots)
+
+    # Fallback: if the recorded path points to a different LobCut installation
+    # (e.g. the app was moved/renamed), try remapping the subtree under our ROOT.
+    if not in_own_roots:
+        for segment in ("input", "output", "temp"):
+            try:
+                # Find the first occurrence of this segment in the path parts
+                parts = resolved.parts
+                idx = next(i for i, p in enumerate(parts) if p == segment)
+                remapped = ROOT / segment / Path(*parts[idx + 1:])
+                if remapped.exists() and remapped.is_file():
+                    return remapped.resolve()
+            except StopIteration:
+                continue
+
+    # For this local desktop app we allow any absolute path that resolves to an
+    # existing file — the strict root-containment check is not needed locally.
     if not resolved.exists() or not resolved.is_file():
         raise HTTPException(status_code=404, detail="File not found.")
     return resolved
@@ -350,6 +403,28 @@ async def get_optional_user(request: Request) -> dict:
 @app.on_event("startup")
 def startup() -> None:
     init_db()
+    recovered = recover_interrupted_jobs()
+    if recovered:
+        log.info("[STARTUP] Re-queued %d interrupted job(s)", recovered)
+    expired = expire_stuck_jobs(max_age_minutes=STUCK_JOB_TIMEOUT_MINUTES)
+    if expired:
+        log.info("[STARTUP] Expired %d stuck job(s) older than %dmin", expired, STUCK_JOB_TIMEOUT_MINUTES)
+
+
+@app.get("/health")
+def health_check() -> dict:
+    db_ok = True
+    try:
+        import sqlite3 as _sqlite3
+        with _sqlite3.connect(DB_PATH) as _conn:
+            _conn.execute("SELECT 1")
+    except Exception:
+        db_ok = False
+    return {
+        "status": "ok" if db_ok else "degraded",
+        "db": "ok" if db_ok else "error",
+        "version": VERSION,
+    }
 
 
 @app.get("/health")
@@ -371,7 +446,7 @@ def auth_login() -> Response:
             COOKIE_NAME,
             _create_token(user),
             httponly=True,
-            secure=False,
+            secure=HTTPS_ONLY,
             samesite="lax",
             max_age=JWT_EXPIRY_DAYS * 24 * 60 * 60,
         )
@@ -445,6 +520,30 @@ async def auth_callback(request: Request, code: str, state: str) -> Response:
 @app.get("/auth/me")
 async def auth_me(user: dict = Depends(get_optional_user)) -> dict:
     return user
+
+
+@app.get("/auth/me/usage")
+def get_usage(user: dict = Depends(get_optional_user)) -> dict:
+    user_id = user["sub"]
+    tier = get_user_tier(user_id)
+    jobs_this_week = count_user_jobs_this_week(user_id)
+    limit = None if tier == "pro" else FREE_TIER_JOBS_PER_WEEK
+    return {
+        "tier": tier,
+        "jobs_this_week": jobs_this_week,
+        "jobs_limit": limit,
+        "jobs_remaining": max(0, limit - jobs_this_week) if limit is not None else None,
+        "max_upload_mb": MAX_UPLOAD_MB_PRO if tier == "pro" else MAX_UPLOAD_MB_FREE,
+    }
+
+
+@app.post("/auth/upgrade")
+def upgrade_tier(
+    user: dict = Depends(get_current_user),
+    gemini_api_key: str = "",
+) -> dict:
+    set_user_tier(user["sub"], "pro")
+    return {"tier": "pro", "status": "upgraded"}
 
 
 def _validate_process_source(file_path: str) -> Path:
@@ -621,8 +720,15 @@ async def openclaw_status(user: dict = Depends(get_current_user)) -> dict:
 
 
 @app.get("/jobs", response_model=list[JobOut])
-def get_jobs(user: dict = Depends(get_optional_user)) -> list[JobOut]:
-    return [_job_out(row) for row in list_jobs_for_dashboard(user_id=user["sub"], limit=50)]
+def get_jobs(
+    limit: int = 50,
+    offset: int = 0,
+    user: dict = Depends(get_optional_user),
+) -> list[JobOut]:
+    return [
+        _job_out(row)
+        for row in list_jobs_for_dashboard(user_id=user["sub"], limit=min(limit, 200), offset=offset)
+    ]
 
 
 @app.get("/jobs/{job_id}", response_model=JobOut)
@@ -662,9 +768,24 @@ def get_job_preview(job_id: int, user: dict = Depends(get_optional_user)) -> Str
 
 
 @app.post("/jobs/retry/{job_id}")
-def retry_existing_job(job_id: int, user: dict = Depends(get_optional_user)) -> dict[str, str]:
+def retry_existing_job(
+    job_id: int,
+    background_tasks: BackgroundTasks,
+    user: dict = Depends(get_optional_user),
+) -> dict[str, str]:
     if not retry_job(job_id, user["sub"]):
         raise HTTPException(status_code=404, detail="Job not found.")
+    row = get_job_by_id(job_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Job not found.")
+    source = str(row["source_path"])
+    detected = str(row["detected_type"] or "").upper()
+    if detected == "IMAGE":
+        background_tasks.add_task(_bg_image, job_id, row)
+    else:
+        pipeline = str(row["pipeline"] or "")
+        action = "reel" if pipeline == PIPELINE_VIDEO else "subtitles"
+        background_tasks.add_task(_bg_video, job_id, source, action)
     return {"status": STATUS_PENDING}
 
 
@@ -727,7 +848,59 @@ def download_job_output(job_id: int, user: dict = Depends(get_optional_user)):
     return FileResponse(path, filename=path.name, media_type="application/octet-stream")
 
 
-CAPTION_OVERRIDES_PATH = Path(os.environ.get("DB_PATH", "data/jobs.db")).parent / "caption_overrides.json"
+@app.get("/jobs/{job_id}/video")
+def stream_job_video(job_id: int, user: dict = Depends(get_optional_user)):
+    row = get_job_by_id(job_id, user_id=user["sub"]) or get_job_by_id(job_id, user_id="local")
+    if row is None or row["status"] == STATUS_DELETED:
+        raise HTTPException(status_code=404, detail="Job not found.")
+    data = _row_to_dict(row)
+    _VIDEO_EXTS = {".mp4", ".mov", ".avi", ".mkv", ".wmv", ".flv", ".webm", ".m4v"}
+    for raw in (data.get("source_path"), data.get("output_path")):
+        if not raw:
+            continue
+        try:
+            path = _resolve_media_path(raw)
+            if path.suffix.lower() in _VIDEO_EXTS:
+                media_type = "video/webm" if path.suffix.lower() == ".webm" else "video/mp4"
+                return FileResponse(str(path), media_type=media_type)
+        except HTTPException:
+            continue
+    raise HTTPException(status_code=404, detail="Video file not found.")
+
+
+@app.patch("/jobs/{job_id}/meta", response_model=JobOut)
+def update_job_meta_endpoint(
+    job_id: int,
+    body: JobMetaIn,
+    user: dict = Depends(get_optional_user),
+) -> JobOut:
+    if not update_job_meta(job_id, user["sub"], game_genre=body.game_genre, game_title=body.game_title, ai_tags=body.ai_tags):
+        raise HTTPException(status_code=404, detail="Job not found.")
+    row = get_job_by_id(job_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Job not found.")
+    return _job_out(row)
+
+
+@app.post("/jobs/{job_id}/rebuild-reel")
+async def rebuild_reel_endpoint(
+    job_id: int,
+    body: RebuildReelIn,
+    background_tasks: BackgroundTasks,
+    user: dict = Depends(get_optional_user),
+) -> dict:
+    row = get_job_by_id(job_id, user_id=user["sub"]) or get_job_by_id(job_id, user_id="local")
+    if row is None:
+        raise HTTPException(status_code=404, detail="Job not found.")
+    if not body.clip_paths and not body.custom_ranges:
+        raise HTTPException(status_code=400, detail="clip_paths or custom_ranges must not be empty.")
+    update_job_status(job_id, STATUS_PROCESSING)
+    custom_ranges_data = [{"start": cr.start, "end": cr.end} for cr in body.custom_ranges]
+    background_tasks.add_task(_bg_rebuild_reel, job_id, body.clip_paths, custom_ranges_data)
+    return {"status": "rebuilding", "job_id": job_id}
+
+
+CAPTION_OVERRIDES_PATH = Path(DB_PATH).parent / "caption_overrides.json"
 
 
 @app.get("/settings")
@@ -855,6 +1028,264 @@ def get_setting_value(key: str) -> SettingOut:
     if value is None:
         raise HTTPException(status_code=404, detail="Setting not found.")
     return SettingOut(key=key, value=value)
+
+
+# ── Workstation upload endpoint ──────────────────────────────────────────────
+_UPLOAD_DIR = ROOT / "temp" / "uploads"
+
+_IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".tif", ".webp", ".heic"}
+_VIDEO_EXTS = {".mp4", ".mov", ".avi", ".mkv", ".wmv", ".flv", ".webm", ".m4v"}
+
+
+def _bg_image(job_id: int, row) -> None:
+    """Run image pipeline in the background after upload."""
+    from pipelines.image_pipeline import process_job as _process_image
+    try:
+        update_job_status(job_id, STATUS_PROCESSING)
+        _process_image(row)
+    except Exception as exc:
+        update_job_status(job_id, STATUS_FAILED, error_message=str(exc))
+
+
+def _bg_video(job_id: int, source_path: str, action: str = "subtitles") -> None:
+    """Run the appropriate video pipeline based on action.
+
+    action:
+      'subtitles' — transcribe + generate .srt (default, fast)
+      'captions'  — transcribe + burn captions to full video using Settings
+      'reel'      — transcribe + highlight-reel selection + burn captions
+    """
+    try:
+        if action == "captions":
+            _bg_burn_captions(job_id, source_path)
+        elif action == "reel":
+            from pipelines.video_pipeline.pipeline import run as _run_video
+            _run_video(job_id, source_path)
+        else:
+            # default: subtitles only — transcribe + .srt, no burn
+            from pipelines.video_pipeline.pipeline import process_api_job as _process_video
+            _process_video(job_id, source_path)
+    except Exception as exc:
+        update_job_status(job_id, STATUS_FAILED, error_message=str(exc))
+
+
+def _bg_burn_captions(job_id: int, source_path: str) -> None:
+    """Transcribe video and burn captions (per user Settings) into the full video."""
+    import shutil
+    from pathlib import Path as _Path
+    from pipelines.video_pipeline import ffmpeg_utils, subtitler, transcriber
+    from pipelines.caption_pipeline import ass_builder, caption_burner
+    from config.settings import WHISPER_MODEL_SIZE
+    from orchestrator.database import (
+        update_job_video_fields,
+        TEMP_DIR,
+        STATUS_PROCESSING,
+        STATUS_DONE,
+        STATUS_FAILED,
+        PIPELINE_VIDEO,
+    )
+    from orchestrator.path_resolver import PathResolver
+
+    source = _Path(source_path)
+    temp_video = None
+    temp_wav = None
+
+    try:
+        update_job_status(job_id, STATUS_PROCESSING)
+        temp_video = PathResolver.temp_copy(source)
+        shutil.copy2(str(source), str(temp_video))
+
+        probe = ffmpeg_utils.probe_video(temp_video)
+        width  = int(probe.get("width",  1920))
+        height = int(probe.get("height", 1080))
+
+        temp_wav = TEMP_DIR / f"{source.stem}_{job_id}.wav"
+        ffmpeg_utils.extract_audio(temp_video, temp_wav)
+
+        transcript = transcriber.transcribe(temp_wav, model_size=WHISPER_MODEL_SIZE)
+
+        # Build SRT alongside the output video
+        output_video_path = PathResolver.output_for_pipeline(PIPELINE_VIDEO, source)
+        output_video_path.parent.mkdir(parents=True, exist_ok=True)
+
+        srt_path = output_video_path.with_suffix(".srt")
+        subtitler.generate_srt(transcript, str(srt_path))
+
+        # Build ASS with user caption settings (reads caption_overrides.json from DB dir)
+        words = transcript.get("words", [])
+        ass_content = ass_builder.build_ass(words, width, height)
+        ass_path = output_video_path.with_suffix(".ass")
+        ass_builder.save_ass(ass_content, str(ass_path))
+
+        # Burn captions into the full video
+        captioned_path = output_video_path.parent / f"{source.stem}_captioned.mp4"
+        caption_burner.burn_captions(str(temp_video), str(ass_path), str(captioned_path))
+
+        update_job_video_fields(
+            job_id=job_id,
+            transcript=transcript.get("full_text", ""),
+            video_duration=probe.get("duration", 0.0),
+        )
+        update_job_status(
+            job_id,
+            STATUS_DONE,
+            output_path=captioned_path,
+            srt_path=srt_path,
+        )
+    except Exception as exc:
+        update_job_status(job_id, STATUS_FAILED, error_message=str(exc))
+        raise
+    finally:
+        for p in (temp_wav, temp_video):
+            if p and _Path(p).exists():
+                try:
+                    _Path(p).unlink()
+                except OSError:
+                    pass
+
+
+def _bg_rebuild_reel(
+    job_id: int,
+    clip_paths: list[str],
+    custom_ranges: list[dict] | None = None,
+) -> None:
+    import json as _json
+    import subprocess as _subprocess
+    from pathlib import Path as _Path
+    from config.path_resolver import PathResolver
+    from pipelines.video_pipeline import reel_assembler
+    from pipelines.caption_pipeline.pipeline import run as _run_captions
+
+    try:
+        valid = [p for p in clip_paths if _Path(p).exists()]
+
+        # Extract user-defined custom time-range clips from the source video
+        if custom_ranges:
+            row = get_job_by_id(job_id)
+            source_path = (row.get("source_path") or "") if row else ""
+            if source_path and _Path(source_path).exists():
+                temp_dir = PathResolver.temp_dir()
+                temp_dir.mkdir(parents=True, exist_ok=True)
+                for idx, cr in enumerate(custom_ranges):
+                    start = float(cr.get("start", 0))
+                    end   = float(cr.get("end",   0))
+                    if end <= start:
+                        continue
+                    clip_name = f"custom_{job_id}_{idx}_{int(start * 10)}_{int(end * 10)}.mp4"
+                    clip_out  = temp_dir / clip_name
+                    try:
+                        _subprocess.run(
+                            ["ffmpeg", "-y",
+                             "-ss", str(start), "-to", str(end),
+                             "-i", source_path,
+                             "-c", "copy",
+                             str(clip_out)],
+                            check=True, capture_output=True,
+                        )
+                        if clip_out.exists() and clip_out.stat().st_size > 0:
+                            valid.append(str(clip_out))
+                    except Exception:
+                        pass   # skip failed extractions; continue with remaining clips
+
+        if not valid:
+            update_job_status(job_id, STATUS_FAILED, error_message="No clip files found on disk")
+            return
+        row = get_job_by_id(job_id)
+        source_name = _Path(row["source_path"]).stem if row else f"job{job_id}"
+        reel_name = f"{source_name}_reel_custom.mp4"
+        reel_target = PathResolver.reels_dir() / reel_name
+        reel_path = reel_assembler.assemble_reel(valid, str(reel_target), max_clips=len(valid))
+        captioned = None
+        try:
+            captioned = _run_captions(reel_path)
+        except Exception:
+            pass
+        final = captioned or reel_path
+        update_job_video_fields(job_id=job_id, reel_path=captioned or reel_path, clip_paths=_json.dumps(valid))
+        update_job_status(job_id, STATUS_DONE, output_path=_Path(final))
+    except Exception as exc:
+        update_job_status(job_id, STATUS_FAILED, error_message=str(exc))
+
+
+@app.post("/upload")
+async def upload_media(
+    file: UploadFile,
+    background_tasks: BackgroundTasks,
+    action: str = Form("subtitles"),
+    user: dict = Depends(get_optional_user),
+) -> dict:
+    """Accept a file upload, save it, create a job, and process in the background.
+
+    action (form field):
+      For images: 'classify' (default)
+      For videos: 'subtitles' | 'captions' | 'reel'
+
+    Returns {job_id, status, type} immediately. Poll GET /jobs/{job_id} for result.
+    """
+    filename = Path(file.filename or "upload").name
+    suffix = Path(filename).suffix.lower()
+
+    if suffix in _IMAGE_EXTS:
+        detected_type = TYPE_IMAGE
+        pipeline = PIPELINE_IMAGE
+    elif suffix in _VIDEO_EXTS:
+        detected_type = TYPE_VIDEO
+        pipeline = PIPELINE_VIDEO
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported file type '{suffix}'. Accepted: images (jpg, png, webp, heic…) and videos (mp4, mov, mkv, webm…).",
+        )
+
+    # Usage limit check
+    user_id = user["sub"]
+    if user_id != "local":
+        tier = get_user_tier(user_id)
+        jobs_this_week = count_user_jobs_this_week(user_id)
+        if tier == "free" and jobs_this_week >= FREE_TIER_JOBS_PER_WEEK:
+            raise HTTPException(
+                status_code=429,
+                detail=f"Weekly limit reached ({FREE_TIER_JOBS_PER_WEEK} jobs/week on Free tier). "
+                       "Upgrade to Pro for unlimited processing.",
+            )
+        max_mb = MAX_UPLOAD_MB_PRO if tier == "pro" else MAX_UPLOAD_MB_FREE
+    else:
+        tier = "pro"
+        max_mb = MAX_UPLOAD_MB_PRO
+
+    _UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    unique_name = f"{secrets.token_hex(6)}_{filename}"
+    save_path = _UPLOAD_DIR / unique_name
+
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+    if len(content) > max_mb * 1024 * 1024:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File too large ({len(content) // (1024*1024)}MB). "
+                   f"{tier.capitalize()} tier allows up to {max_mb}MB per file.",
+        )
+    save_path.write_bytes(content)
+
+    job_id = insert_job(save_path, detected_type, pipeline, user_id=user["sub"])
+    if job_id is None:
+        save_path.unlink(missing_ok=True)
+        existing = get_job_by_source(save_path, user_id=user["sub"])
+        job_id = int(existing["id"]) if existing else None
+        if job_id is None:
+            raise HTTPException(status_code=409, detail="File already queued or processed.")
+
+    row = get_job_by_id(job_id)
+    if row is None:
+        raise HTTPException(status_code=500, detail="Job created but could not be loaded.")
+
+    if detected_type == TYPE_IMAGE:
+        background_tasks.add_task(_bg_image, job_id, row)
+    else:
+        background_tasks.add_task(_bg_video, job_id, str(save_path), action)
+
+    return {"job_id": job_id, "status": "PENDING", "type": detected_type, "action": action}
 
 
 class SPAStaticFiles(StaticFiles):

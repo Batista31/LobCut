@@ -5,7 +5,7 @@ All SQLite interactions for LobCut job tracking.
 
 import sqlite3
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
@@ -88,6 +88,14 @@ CREATE TABLE IF NOT EXISTS reel_jobs (
 );
 CREATE INDEX IF NOT EXISTS idx_reel_jobs_status ON reel_jobs (status);
 CREATE INDEX IF NOT EXISTS idx_reel_jobs_path   ON reel_jobs (reel_path);
+
+CREATE TABLE IF NOT EXISTS usage_events (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id     TEXT NOT NULL,
+    event_type  TEXT NOT NULL,
+    created_at  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_usage_user_time ON usage_events (user_id, created_at);
 """
 
 _OPTIONAL_COLUMNS = {
@@ -203,6 +211,7 @@ def _ensure_user_columns(conn) -> None:
         "telegram_chat_id": "TEXT",
         "created_at": "TEXT NOT NULL DEFAULT ''",
         "updated_at": "TEXT NOT NULL DEFAULT ''",
+        "tier": "TEXT NOT NULL DEFAULT 'free'",
     }
     for column_name, column_type in optional_columns.items():
         if column_name not in existing_columns:
@@ -377,6 +386,34 @@ def update_job_video_fields(
     log.debug("Job #%d video metadata updated", job_id)
 
 
+def update_job_meta(
+    job_id: int,
+    user_id: str,
+    *,
+    game_genre: Optional[str] = None,
+    game_title: Optional[str] = None,
+    ai_tags: Optional[str] = None,
+) -> bool:
+    fields: dict = {}
+    if game_genre is not None:
+        fields["game_genre"] = game_genre
+    if game_title is not None:
+        fields["game_title"] = game_title
+    if ai_tags is not None:
+        fields["ai_tags"] = ai_tags
+    if not fields:
+        return True
+    fields["updated_at"] = _now()
+    set_clause = ", ".join(f"{k} = ?" for k in fields)
+    params = list(fields.values()) + [job_id, user_id]
+    with _connect() as conn:
+        cur = conn.execute(
+            f"UPDATE jobs SET {set_clause} WHERE id = ? AND (user_id = ? OR user_id = 'local')",  # noqa: S608
+            params,
+        )
+    return cur.rowcount > 0
+
+
 def job_exists(source_path: Path, user_id: str = DEFAULT_USER_ID) -> bool:
     with _connect() as conn:
         row = conn.execute(
@@ -446,7 +483,7 @@ def list_jobs(
         return conn.execute(query, params).fetchall()
 
 
-def list_jobs_for_dashboard(user_id: str, limit: int = 50) -> list[sqlite3.Row]:
+def list_jobs_for_dashboard(user_id: str, limit: int = 50, offset: int = 0) -> list[sqlite3.Row]:
     with _connect() as conn:
         return conn.execute(
             """
@@ -455,9 +492,9 @@ def list_jobs_for_dashboard(user_id: str, limit: int = 50) -> list[sqlite3.Row]:
             WHERE status != ?
               AND (user_id = ? OR user_id = ?)
             ORDER BY created_at DESC
-            LIMIT ?
+            LIMIT ? OFFSET ?
             """,
-            (STATUS_DELETED, user_id, DEFAULT_USER_ID, limit),
+            (STATUS_DELETED, user_id, DEFAULT_USER_ID, limit, offset),
         ).fetchall()
 
 
@@ -786,3 +823,75 @@ def update_reel_job(
                 reel_job_id,
             ),
         )
+
+
+# ── Tier & usage tracking ──────────────────────────────────────
+
+def get_user_tier(user_id: str) -> str:
+    user = get_user(user_id)
+    if user is None:
+        return "free"
+    try:
+        return user["tier"] or "free"
+    except (IndexError, KeyError):
+        return "free"
+
+
+def set_user_tier(user_id: str, tier: str) -> None:
+    now = _now()
+    with _connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO users (sub, tier, created_at, updated_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(sub) DO UPDATE SET
+                tier       = excluded.tier,
+                updated_at = excluded.updated_at
+            """,
+            (user_id, tier, now, now),
+        )
+    log.info("User %s tier set to %s", user_id, tier)
+
+
+def count_user_jobs_this_week(user_id: str) -> int:
+    week_ago = (datetime.utcnow() - timedelta(days=7)).isoformat(sep=" ", timespec="seconds")
+    with _connect() as conn:
+        row = conn.execute(
+            """
+            SELECT COUNT(*) AS cnt
+            FROM jobs
+            WHERE user_id = ?
+              AND status != ?
+              AND created_at >= ?
+            """,
+            (user_id, STATUS_DELETED, week_ago),
+        ).fetchone()
+    return int(row["cnt"]) if row else 0
+
+
+def expire_stuck_jobs(max_age_minutes: int = 45) -> int:
+    cutoff = (datetime.utcnow() - timedelta(minutes=max_age_minutes)).isoformat(sep=" ", timespec="seconds")
+    now = _now()
+    with _connect() as conn:
+        cur = conn.execute(
+            """
+            UPDATE jobs
+            SET status        = ?,
+                error_message = 'Job timed out — was stuck in PROCESSING',
+                updated_at    = ?
+            WHERE status = ? AND updated_at < ?
+            """,
+            (STATUS_FAILED, now, STATUS_PROCESSING, cutoff),
+        )
+    if cur.rowcount:
+        log.warning("[RECOVERY] Expired %d stuck PROCESSING job(s) older than %d min", cur.rowcount, max_age_minutes)
+    return cur.rowcount
+
+
+def count_jobs_for_dashboard(user_id: str) -> int:
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) AS cnt FROM jobs WHERE status != ? AND (user_id = ? OR user_id = ?)",
+            (STATUS_DELETED, user_id, DEFAULT_USER_ID),
+        ).fetchone()
+    return int(row["cnt"]) if row else 0

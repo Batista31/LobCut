@@ -25,10 +25,21 @@ def detect_game(frame_paths: list[str], transcript_text: str) -> dict:
     if not sampled:
         return fallback
 
+    valid_genres = (
+        "fps, battle_royale, moba, rpg, survival, sandbox, racing, strategy, "
+        "fighting, puzzle, esports, football, cricket, basketball, tennis, "
+        "sports, commentary, vlog, unknown"
+    )
     prompt = (
-        "You are a video game analyst. Based on gameplay frames and transcript, "
-        "identify game and genre. Respond ONLY in JSON with keys: game_title, game_genre, "
-        "confidence, genre_notes."
+        "You are a video content analyst. Based on the provided frames and transcript excerpt, "
+        "identify the content type and genre. The video may be a video game, a real sport "
+        "(football, cricket, basketball, tennis, etc.), a YouTube vlog, sports commentary, "
+        "or any other content. "
+        f"Respond ONLY with valid JSON using these exact keys: "
+        "game_title (string name of the game/sport/show, or null if not identifiable), "
+        f"game_genre (one of: {valid_genres}), "
+        "confidence (high/medium/low), "
+        "genre_notes (brief explanation of what you saw)."
     )
     contents = [prompt, transcript_excerpt]
     for path in sampled:

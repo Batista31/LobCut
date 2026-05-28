@@ -1,6 +1,6 @@
 import { FormEvent, useEffect, useState } from 'react';
 import { api, type User } from '../api';
-import { Topbar } from '../components/TopbarLive';
+import { Topbar } from '../components/Topbar';
 
 type Props = {
   user: User;
@@ -68,9 +68,12 @@ function readSettings(raw: Record<string, unknown>): CaptionSettings {
 
 export function CaptionSettingsPage({ user }: Props) {
   const [chatId, setChatId] = useState('');
+  const [outputDir, setOutputDir] = useState('');
   const [caption, setCaption] = useState<CaptionSettings>(defaults);
+  const [loadingSettings, setLoadingSettings] = useState(true);
   const [toast, setToast] = useState<Toast | null>(null);
   const [savingTelegram, setSavingTelegram] = useState(false);
+  const [savingOutput, setSavingOutput] = useState(false);
   const [savingCaptions, setSavingCaptions] = useState(false);
   const [testing, setTesting] = useState(false);
 
@@ -80,12 +83,21 @@ export function CaptionSettingsPage({ user }: Props) {
   };
 
   useEffect(() => {
-    api.settings()
-      .then((settings) => setChatId(settings.telegram_chat_id || ''))
-      .catch(() => setChatId(''));
-    api.captionSettings()
+    const p1 = api.settings()
+      .then((settings) => {
+        setChatId(settings.telegram_chat_id || '');
+        setOutputDir(settings.output_dir || '');
+      })
+      .catch((e: unknown) => {
+        showToast({ tone: 'error', message: e instanceof Error ? e.message : 'Failed to load settings.' });
+      });
+    const p2 = api.captionSettings()
       .then((settings) => setCaption(readSettings(settings)))
-      .catch(() => setCaption(defaults));
+      .catch((e: unknown) => {
+        showToast({ tone: 'error', message: e instanceof Error ? e.message : 'Failed to load caption settings.' });
+        setCaption(defaults);
+      });
+    void Promise.all([p1, p2]).finally(() => setLoadingSettings(false));
   }, []);
 
   const updateCaption = <K extends keyof CaptionSettings>(key: K, value: CaptionSettings[K]) => {
@@ -107,6 +119,19 @@ export function CaptionSettingsPage({ user }: Props) {
       showToast({ tone: 'error', message: error instanceof Error ? error.message : 'Failed to save Telegram settings' });
     } finally {
       setSavingTelegram(false);
+    }
+  };
+
+  const saveOutputDir = async (event: FormEvent) => {
+    event.preventDefault();
+    setSavingOutput(true);
+    try {
+      await api.saveSetting('output_dir', outputDir.trim());
+      showToast({ tone: 'success', message: 'Output directory saved' });
+    } catch (error) {
+      showToast({ tone: 'error', message: error instanceof Error ? error.message : 'Failed to save' });
+    } finally {
+      setSavingOutput(false);
     }
   };
 
@@ -144,6 +169,39 @@ export function CaptionSettingsPage({ user }: Props) {
   return (
     <main className="appShell">
       <Topbar user={user} currentPath="/settings" />
+
+      {loadingSettings && (
+        <div className="settingsLoadingRow">
+          <div className="wsSpinner" />
+          <span>Loading settings…</span>
+        </div>
+      )}
+
+      {/* ── Output Directory ── */}
+      <section className="settingsPanel telegramSettingsPanel" style={{ marginBottom: '20px' }}>
+        <div className="sectionHead">
+          <h1>Output Directory</h1>
+        </div>
+        <form className="settingsForm telegramSettingsForm" onSubmit={saveOutputDir}>
+          <label>
+            Custom output path
+            <div className="telegramInputRow">
+              <input
+                value={outputDir}
+                onChange={(e) => setOutputDir(e.target.value)}
+                placeholder="e.g. D:\MyVideos\Output  (leave empty for default)"
+              />
+              <button type="submit" disabled={savingOutput}>
+                {savingOutput ? 'Saving…' : 'Save'}
+              </button>
+            </div>
+          </label>
+          <p className="settingsHint" style={{ padding: '0' }}>
+            Where processed files (reels, captioned videos, .srt files) are saved.
+            Leave empty to use the default <code>output/</code> folder inside the LobCut directory.
+          </p>
+        </form>
+      </section>
 
       <section className="settingsPanel telegramSettingsPanel">
         <div className="sectionHead">

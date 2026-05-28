@@ -1,6 +1,6 @@
 import { FormEvent, useEffect, useState } from 'react';
 import { api, type User, type Watcher } from '../api';
-import { Topbar } from '../components/TopbarLive';
+import { Topbar } from '../components/Topbar';
 
 type LobCutWindow = Window & {
   watcherAPI?: {
@@ -10,17 +10,34 @@ type LobCutWindow = Window & {
   };
 };
 
+type Toast = { tone: 'success' | 'error'; message: string };
+
 type Props = {
   user: User;
 };
 
 export function Watchers({ user }: Props) {
   const [watchers, setWatchers] = useState<Watcher[]>([]);
+  const [loadingList, setLoadingList] = useState(true);
   const [path, setPath] = useState('');
   const [pipeline, setPipeline] = useState('auto');
-  const [message, setMessage] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [toast, setToast] = useState<Toast | null>(null);
 
-  const load = async () => setWatchers(await api.watchers());
+  const showToast = (next: Toast) => {
+    setToast(next);
+    window.setTimeout(() => setToast(null), 2500);
+  };
+
+  const load = async () => {
+    try {
+      setWatchers(await api.watchers());
+    } catch (e) {
+      showToast({ tone: 'error', message: e instanceof Error ? e.message : 'Failed to load watchers.' });
+    } finally {
+      setLoadingList(false);
+    }
+  };
 
   useEffect(() => {
     void load();
@@ -29,20 +46,54 @@ export function Watchers({ user }: Props) {
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     if (!path.trim()) return;
-    const watcherAPI = (window as LobCutWindow).watcherAPI;
-    if (watcherAPI) {
-      await watcherAPI.add(path.trim());
-    } else {
-      await api.addWatcher({
-        path: path.trim(),
-        pipeline_override: pipeline === 'auto' ? undefined : pipeline,
-      });
+    setSubmitting(true);
+    try {
+      const watcherAPI = (window as LobCutWindow).watcherAPI;
+      if (watcherAPI) {
+        await watcherAPI.add(path.trim());
+      } else {
+        await api.addWatcher({
+          path: path.trim(),
+          pipeline_override: pipeline === 'auto' ? undefined : pipeline,
+        });
+      }
+      setPath('');
+      setPipeline('auto');
+      showToast({ tone: 'success', message: 'Watcher started.' });
+      await load();
+    } catch (e) {
+      showToast({ tone: 'error', message: e instanceof Error ? e.message : 'Failed to add watcher.' });
+    } finally {
+      setSubmitting(false);
     }
-    setPath('');
-    setPipeline('auto');
-    setMessage('Watcher started.');
-    window.setTimeout(() => setMessage(''), 2000);
-    await load();
+  };
+
+  const handleToggle = async (watcher: Watcher, checked: boolean) => {
+    try {
+      const watcherAPI = (window as LobCutWindow).watcherAPI;
+      if (watcherAPI) {
+        await watcherAPI.toggle(watcher.id, watcher.path, checked);
+      } else {
+        await api.updateWatcher(watcher.id, checked);
+      }
+      await load();
+    } catch (e) {
+      showToast({ tone: 'error', message: e instanceof Error ? e.message : 'Failed to update watcher.' });
+    }
+  };
+
+  const handleRemove = async (watcher: Watcher) => {
+    try {
+      const watcherAPI = (window as LobCutWindow).watcherAPI;
+      if (watcherAPI) {
+        await watcherAPI.remove(watcher.id, watcher.path);
+      } else {
+        await api.deleteWatcher(watcher.id);
+      }
+      await load();
+    } catch (e) {
+      showToast({ tone: 'error', message: e instanceof Error ? e.message : 'Failed to remove watcher.' });
+    }
   };
 
   return (
@@ -55,18 +106,31 @@ export function Watchers({ user }: Props) {
         </div>
 
         <form className="watcherForm" onSubmit={submit}>
-          <input value={path} onChange={(event) => setPath(event.target.value)} placeholder="Enter folder path to monitor..." />
-          <select value={pipeline} onChange={(event) => setPipeline(event.target.value)}>
+          <input
+            value={path}
+            onChange={(event) => setPath(event.target.value)}
+            placeholder="Enter folder path to monitor..."
+            disabled={submitting}
+          />
+          <select
+            value={pipeline}
+            onChange={(event) => setPipeline(event.target.value)}
+            disabled={submitting}
+          >
             <option value="auto">Auto Detect</option>
             <option value="image_pipeline">Images Only</option>
             <option value="video_pipeline">Videos Only</option>
           </select>
-          <button type="submit">Add Watch</button>
+          <button type="submit" disabled={submitting || !path.trim()}>
+            {submitting ? 'Adding…' : 'Add Watch'}
+          </button>
         </form>
       </section>
 
       <section className="watcherList" style={{ marginTop: 16 }}>
-        {watchers.length === 0 ? (
+        {loadingList ? (
+          <div className="placeholder">Loading watchers…</div>
+        ) : watchers.length === 0 ? (
           <div className="placeholder">No watch folders configured yet. Add one above to start monitoring.</div>
         ) : (
           watchers.map((watcher) => (
@@ -80,30 +144,14 @@ export function Watchers({ user }: Props) {
                 <input
                   type="checkbox"
                   checked={watcher.enabled}
-                  onChange={async (event) => {
-                    const watcherAPI = (window as LobCutWindow).watcherAPI;
-                    if (watcherAPI) {
-                      await watcherAPI.toggle(watcher.id, watcher.path, event.target.checked);
-                    } else {
-                      await api.updateWatcher(watcher.id, event.target.checked);
-                    }
-                    await load();
-                  }}
+                  onChange={(event) => void handleToggle(watcher, event.target.checked)}
                 />
                 Enabled
               </label>
               <button
                 type="button"
                 className="compactButton dangerButton"
-                onClick={async () => {
-                  const watcherAPI = (window as LobCutWindow).watcherAPI;
-                  if (watcherAPI) {
-                    await watcherAPI.remove(watcher.id, watcher.path);
-                  } else {
-                    await api.deleteWatcher(watcher.id);
-                  }
-                  await load();
-                }}
+                onClick={() => void handleRemove(watcher)}
               >
                 Remove
               </button>
@@ -111,7 +159,7 @@ export function Watchers({ user }: Props) {
           ))
         )}
       </section>
-      {message ? <div className="toastBanner success">{message}</div> : null}
+      {toast ? <div className={`toastBanner ${toast.tone}`}>{toast.message}</div> : null}
     </main>
   );
 }

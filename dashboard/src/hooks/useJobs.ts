@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api, type Job } from '../api';
 
-export function useJobs() {
+export function useJobs(limit = 50) {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [loading, setLoading] = useState(true);
   const [polling, setPolling] = useState(false);
@@ -9,12 +9,12 @@ export function useJobs() {
   const refresh = useCallback(async () => {
     setPolling(true);
     try {
-      setJobs(await api.jobs());
+      setJobs(await api.jobs(limit));
     } finally {
       setLoading(false);
       setPolling(false);
     }
-  }, []);
+  }, [limit]);
 
   useEffect(() => {
     void refresh();
